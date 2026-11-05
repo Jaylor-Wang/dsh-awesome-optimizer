@@ -78,3 +78,104 @@ test('read_batch tolerates partial missing files without losing valid reads in t
     await host.dispose();
   }
 });
+
+test('edit_batch edits multiple files in a single tool call through ToolExecutionPipeline', async () => {
+  const host = await createTestRuntime({
+    files: {
+      'src/file1.ts': 'export const one = 1;',
+      'src/file2.ts': 'export const two = 2;'
+    },
+    script: [
+      [call('eb1', 'edit_batch', {
+        edits: [
+          { file_path: 'src/file1.ts', old_string: '1', new_string: '100' },
+          { file_path: 'src/file2.ts', old_string: '2', new_string: '200' }
+        ]
+      })],
+      [{ type: 'text', text: 'Batch edits applied across both files.' }]
+    ]
+  });
+
+  try {
+    await host.run('Edit file1 and file2 in one turn');
+    assert.equal(host.errors.length, 0);
+    assert.equal(host.requests.length, 2);
+
+    // Underlying native edit tool was invoked twice via ToolExecutionPipeline
+    assert.equal(host.calls.filter(c => c.name === 'edit').length, 2);
+    assert.equal(host.virtualFs.get('src/file1.ts'), 'export const one = 100;');
+    assert.equal(host.virtualFs.get('src/file2.ts'), 'export const two = 200;');
+
+    const stats = host.compositeTools.getStats(host.agent.session);
+    assert.equal(stats.editBatchesExecuted, 1);
+    assert.equal(stats.editsRequested, 2);
+    assert.equal(stats.editsSucceeded, 2);
+    assert.equal(stats.editsFailed, 0);
+  } finally {
+    await host.dispose();
+  }
+});
+
+test('edit_batch applies sequential edits to the same file in order', async () => {
+  const host = await createTestRuntime({
+    files: {
+      'doc.txt': 'first-word second-word third-word'
+    },
+    script: [
+      [call('eb-seq', 'edit_batch', {
+        edits: [
+          { file_path: 'doc.txt', old_string: 'first-word', new_string: 'alpha' },
+          { file_path: 'doc.txt', old_string: 'second-word', new_string: 'beta' }
+        ]
+      })],
+      [{ type: 'text', text: 'Sequential edits applied in order.' }]
+    ]
+  });
+
+  try {
+    await host.run('Edit doc.txt sequentially');
+    assert.equal(host.errors.length, 0);
+    assert.equal(host.virtualFs.get('doc.txt'), 'alpha beta third-word');
+    const stats = host.compositeTools.getStats(host.agent.session);
+    assert.equal(stats.editsSucceeded, 2);
+  } finally {
+    await host.dispose();
+  }
+});
+
+test('edit_batch tolerates partial failures without losing successful edits', async () => {
+  const host = await createTestRuntime({
+    files: {
+      'valid.txt': 'preserve this key: old-val',
+      'unmatched.txt': 'different text'
+    },
+    script: [
+      [call('eb-partial', 'edit_batch', {
+        edits: [
+          { file_path: 'valid.txt', old_string: 'old-val', new_string: 'new-val' },
+          { file_path: 'unmatched.txt', old_string: 'non-existent', new_string: 'replacement' }
+        ]
+      })],
+      [{ type: 'text', text: 'Handled partial edit batch.' }]
+    ]
+  });
+
+  try {
+    await host.run('Perform mixed edit batch');
+    assert.equal(host.errors.length, 0);
+    assert.equal(host.virtualFs.get('valid.txt'), 'preserve this key: new-val');
+
+    const stats = host.compositeTools.getStats(host.agent.session);
+    assert.equal(stats.editsSucceeded, 1);
+    assert.equal(stats.editsFailed, 1);
+
+    const toolResults = host.events.filter(e => e.type === 'tool/result');
+    assert.equal(toolResults.length, 1);
+    assert.equal(toolResults[0].data.message.isError, false);
+    const output = toolResults[0].data.message.content.map(b => b.text).join('\n');
+    assert.match(output, /Edited valid\.txt/);
+    assert.match(output, /\[ERROR\]/);
+  } finally {
+    await host.dispose();
+  }
+});

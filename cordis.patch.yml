@@ -19,7 +19,9 @@
         compositeTools:
           enabled: true
           readBatch: true
+          editBatch: true
           maxBatchFiles: 10
+          maxBatchEdits: 10
         convergence:
           enabled: true
           injectGuidance: true

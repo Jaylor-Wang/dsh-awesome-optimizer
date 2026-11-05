@@ -4,7 +4,9 @@ import type z from '@deepseek-ai/schemastery';
 export interface CompositeToolsOptions {
   enabled?: boolean;
   readBatch?: boolean;
+  editBatch?: boolean;
   maxBatchFiles?: number;
+  maxBatchEdits?: number;
   defaultLimitPerFile?: number;
 }
 
@@ -13,6 +15,10 @@ export interface CompositeToolsStats {
   filesRequested: number;
   filesSucceeded: number;
   filesFailed: number;
+  editBatchesExecuted: number;
+  editsRequested: number;
+  editsSucceeded: number;
+  editsFailed: number;
 }
 
 export interface CompositeToolsService {
@@ -20,6 +26,7 @@ export interface CompositeToolsService {
 }
 
 export declare const READ_BATCH_TOOL: 'read_batch';
+export declare const EDIT_BATCH_TOOL: 'edit_batch';
 export declare const CompositeToolsConfig: z<CompositeToolsOptions>;
 export declare function applyCompositeTools(ctx: Context, rawConfig?: CompositeToolsOptions): CompositeToolsService | null;
 export declare const name: string;

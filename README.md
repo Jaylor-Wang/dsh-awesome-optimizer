@@ -3,7 +3,7 @@
 > Non-invasive runtime policy, PTC-backed composite batch tools, soft convergence guidance, and A/B turn telemetry plugin for the official DeepSeek Harness (`@deepseek-ai/dsh-agent-loop`).
 
 [![Release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-plugin-agent-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-plugin-agent-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-14%20passed-brightgreen.svg)](test)
+[![Tests](https://img.shields.io/badge/tests-17%20passed-brightgreen.svg)](test)
 [![English](https://img.shields.io/badge/lang-English-blue.svg)](README.md)
 [![简体中文](https://img.shields.io/badge/lang-简体中文-red.svg)](README.zh.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -27,7 +27,9 @@
    - Provides one-shot `retry_failed_write` recovery over `ToolExecutionPipeline` when a large `write` (`8KB–1MB`) is rejected due to an unpaired `justification`, avoiding regenerating the file content.
 5. **Composite Batch Tooling (`src/composite-tools.js`)**:
    - Registers `read_batch` to read up to `maxBatchFiles` (`10`) files in a single tool call.
-   - Dispatches every sub-read through `ToolExecutionPipeline` (`tool/ptc-dispatch-start` / `tool/ptc-dispatch`) so all DSH sandbox permissions and policy hooks remain enforced.
+   - Registers `edit_batch` to apply up to `maxBatchEdits` (`10`) targeted literal text replacements across one or multiple files in a single tool call.
+   - Dispatches every sub-operation sequentially through `ToolExecutionPipeline` (`tool/ptc-dispatch-start` / `tool/ptc-dispatch`) so all DSH sandbox permissions, file mutation policies, and observation hooks remain enforced.
+   - Tolerates partial failures, returning structured status for each entry rather than aborting valid operations.
 6. **Lightweight Soft Convergence (`src/convergence.js`)**:
    - Injects batching/efficiency guidance and periodic micro-directive reminders (`stepInterval: 8`, `maxRemindersPerTurn: 4`).
    - Automatically suppresses reminders when preceding tool calls fail to allow unimpeded debugging.
@@ -59,7 +61,9 @@
         compositeTools:
           enabled: true
           readBatch: true
+          editBatch: true
           maxBatchFiles: 10
+          maxBatchEdits: 10
         convergence:
           enabled: true
           injectGuidance: true

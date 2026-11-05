@@ -3,7 +3,7 @@
 > 围绕官方 DeepSeek Harness (`@deepseek-ai/dsh-agent-loop`) 构建的非侵入式运行期防护、PTC 复合批处理工具、轻量软预算提醒与客观 A/B 轮次度量插件。
 
 [![Release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-plugin-agent-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-plugin-agent-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-14%20passed-brightgreen.svg)](test)
+[![Tests](https://img.shields.io/badge/tests-17%20passed-brightgreen.svg)](test)
 [![English](https://img.shields.io/badge/lang-English-blue.svg)](README.md)
 [![简体中文](https://img.shields.io/badge/lang-简体中文-red.svg)](README.zh.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -27,7 +27,8 @@
    - 当大文件写入（`8KB–1MB`）因未配对的 `justification` 被拒时，提供单次 `retry_failed_write` 恢复工具，通过 `ToolExecutionPipeline` 复用原文重放，避免模型重新生成大段内容。
 5. **PTC 复合批处理工具 (`src/composite-tools.js`)**：
    - 提供 `read_batch` 工具，支持单次调用并发读取最多 `10` 个文件片段，真正从物理往返上减少多文件顺序读取的轮次。
-   - 每个子读取均通过官方 `ToolExecutionPipeline` 分发，完整保留沙箱权限与策略钩子，并容忍单文件局部缺失而不丢失同批次其他文件的读取结果。
+   - 提供 `edit_batch` 工具，支持单次调用顺序执行最多 `10` 处跨单文件或多文件的字面量文本替换，彻底解决模型写脆弱 Unified Diff 容易出错的痛点。
+   - 所有子操作均通过官方 `ToolExecutionPipeline` 分发，完整保留沙箱权限、变更审核与策略钩子，并容忍局部错误而不破坏同批次其他有效操作。
 6. **轻量收敛指导 (`src/convergence.js`)**：
    - 注入并行调用与收敛提示词，升级为周期性微指令软提醒（默认 `stepInterval: 8` 步，每轮上限 `maxRemindersPerTurn: 4` 次）。
    - 具备错误感知抑制：当模型上一步工具调用出错时自动静默避让，优先保证排错顺畅，避免催促干扰。

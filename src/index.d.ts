@@ -53,6 +53,7 @@ export {
 } from './failure-recovery.d.ts';
 export {
   READ_BATCH_TOOL,
+  EDIT_BATCH_TOOL,
   type CompositeToolsOptions,
   type CompositeToolsStats,
   type CompositeToolsService

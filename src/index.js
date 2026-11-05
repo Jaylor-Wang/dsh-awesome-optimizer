@@ -2,7 +2,7 @@ import z from '@deepseek-ai/schemastery';
 import { applyRuntimePolicy, RuntimePolicyConfig, RuntimePolicyManager, POLICY_SOURCE } from './runtime-policy.js';
 import { applyFileMutationPolicy, FileMutationPolicyConfig, FileMutationPolicyManager, MUTATION_SOURCE } from './file-mutation-policy.js';
 import { applyFailureRecovery, RecoveryRecord, RECOVERY_SOURCE, RETRY_TOOL, PAIRING_ERROR } from './failure-recovery.js';
-import { applyCompositeTools, CompositeToolsConfig, READ_BATCH_TOOL } from './composite-tools.js';
+import { applyCompositeTools, CompositeToolsConfig, READ_BATCH_TOOL, EDIT_BATCH_TOOL } from './composite-tools.js';
 import { applyConvergence, ConvergenceConfig, SOURCE as CONVERGENCE_SOURCE, GUIDANCE, REMINDER } from './convergence.js';
 import { applyTelemetry, TelemetryConfig, AgentTelemetryManager, compareTurnSummaries } from './telemetry.js';
 
@@ -66,6 +66,7 @@ export {
   AgentTelemetryManager,
   compareTurnSummaries,
   READ_BATCH_TOOL,
+  EDIT_BATCH_TOOL,
   RETRY_TOOL,
   PAIRING_ERROR,
   CONVERGENCE_SOURCE,
