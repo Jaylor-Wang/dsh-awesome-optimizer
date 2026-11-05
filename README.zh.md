@@ -3,7 +3,7 @@
 > 围绕官方 DeepSeek Harness (`@deepseek-ai/dsh-agent-loop`) 构建的非侵入式运行期防护、PTC 复合批处理工具、轻量软预算提醒与客观 A/B 轮次度量插件。
 
 [![Release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-plugin-agent-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-plugin-agent-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-13%20passed-brightgreen.svg)](test)
+[![Tests](https://img.shields.io/badge/tests-14%20passed-brightgreen.svg)](test)
 [![English](https://img.shields.io/badge/lang-English-blue.svg)](README.md)
 [![简体中文](https://img.shields.io/badge/lang-简体中文-red.svg)](README.zh.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -29,8 +29,9 @@
    - 提供 `read_batch` 工具，支持单次调用并发读取最多 `10` 个文件片段，真正从物理往返上减少多文件顺序读取的轮次。
    - 每个子读取均通过官方 `ToolExecutionPipeline` 分发，完整保留沙箱权限与策略钩子，并容忍单文件局部缺失而不丢失同批次其他文件的读取结果。
 6. **轻量收敛指导 (`src/convergence.js`)**：
-   - 注入并行调用与收敛提示词，并在达到 `softStepBudget`（默认 `8` 步）时追加一次提醒消息。
-   - **客观说明**：软预算提醒会追加一条 `notice` 消息，它不是硬停止条件，本身不能单靠提示词承诺减少模型请求，且会增加少量输入 token（由 `telemetry` 精确记录）。
+   - 注入并行调用与收敛提示词，升级为周期性微指令软提醒（默认 `stepInterval: 8` 步，每轮上限 `maxRemindersPerTurn: 4` 次）。
+   - 具备错误感知抑制：当模型上一步工具调用出错时自动静默避让，优先保证排错顺畅，避免催促干扰。
+   - **客观说明**：软预算提醒会追加一条精炼的微指令 `notice` 消息，它不是硬停止条件，本身不能单靠提示词承诺减少模型请求，且产生极低输入 token 消耗（由 `telemetry` 精确记录）。
 7. **客观 A/B 度量 (`src/telemetry.js`)**：
    - 统计模型请求数（`modelRequests`）、工具调用数（`toolCalls`）、PTC 子调用数（`ptcSubCalls`）、工具并行批次比（`parallelismRatio = toolCalls / toolBatches`）、失败次数、耗时、Token 消耗与前缀稳定性（`prefixChanges`），支持与基线直接计算差值。
 

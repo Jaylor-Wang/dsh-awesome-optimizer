@@ -4,6 +4,8 @@ import type z from '@deepseek-ai/schemastery';
 export interface ConvergenceOptions {
   enabled?: boolean;
   injectGuidance?: boolean;
+  stepInterval?: number;
+  maxRemindersPerTurn?: number;
   softStepBudget?: number;
 }
 

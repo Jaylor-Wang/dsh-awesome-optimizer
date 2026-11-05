@@ -33,14 +33,72 @@ test('convergence guidance injects one-time soft step budget notice without hard
       .join('\n');
     assert.match(firstRequestText, /Batch independent reads/);
 
-    // Soft step budget reminder injected exactly once
+    // Periodic reminder injected at step 2 and step 4
     const reminders = host.events.filter(
       e => e.type === 'user/message' && e.data.source?.kind === CONVERGENCE_SOURCE
     );
-    assert.equal(reminders.length, 1);
+    assert.equal(reminders.length, 2);
+    assert.match(reminders[0].data.content[0].text, /Accelerate execution/);
 
     const endEvent = host.events.filter(e => e.type === 'turn/end').at(-1);
     assert.equal(endEvent?.data.reason.kind, 'completed');
+  } finally {
+    await host.dispose();
+  }
+});
+
+test('convergence guidance injects periodic micro-directive, caps at maxRemindersPerTurn, and suppresses on tool error', async () => {
+  const host = await createTestRuntime({
+    files: {
+      'ok.txt': 'all good'
+    },
+    optimizerConfig: {
+      convergence: {
+        enabled: true,
+        stepInterval: 2,
+        maxRemindersPerTurn: 2
+      }
+    },
+    readHandler(args) {
+      if (args.file_path === 'error.txt') {
+        throw new Error('intentional-tool-failure');
+      }
+      return 'ok-content';
+    },
+    script: [
+      // Step 1: Tool execution fails
+      [call('c1', 'read', { file_path: 'error.txt' })],
+      // Step 2: step 2 >= interval 2, BUT step 1 had error -> reminder suppressed!
+      [call('c2', 'read', { file_path: 'ok.txt' })],
+      // Step 3: step 2 was clean -> reminder 1 injected!
+      [call('c3', 'read', { file_path: 'ok.txt' })],
+      // Step 4: step 4 meets next due (2 * 2 = 4) -> reminder 2 injected!
+      [call('c4', 'read', { file_path: 'ok.txt' })],
+      // Step 5
+      [call('c5', 'read', { file_path: 'ok.txt' })],
+      // Step 6: step 6 >= 3 * 2, BUT maxRemindersPerTurn (2) is reached -> suppressed!
+      [{ type: 'text', text: 'Concluded task.' }]
+    ]
+  });
+
+  try {
+    await host.run('Run long task with tool error and recovery');
+    assert.equal(host.errors.length, 0);
+
+    const reminders = host.events.filter(
+      e => e.type === 'user/message' && e.data.source?.kind === CONVERGENCE_SOURCE
+    );
+    // Injected exactly twice (capped at maxRemindersPerTurn = 2)
+    assert.equal(reminders.length, 2);
+    for (const r of reminders) {
+      assert.match(r.data.content[0].text, /Accelerate execution/);
+    }
+
+    const summary = host.agent.session
+      ? host.ctx.get('convergenceGuidance').getSummary(host.agent.session)
+      : null;
+    assert.equal(summary?.remindersSent, 2);
+    assert.equal(summary?.reminded, true);
   } finally {
     await host.dispose();
   }

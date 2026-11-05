@@ -14,24 +14,28 @@ export const GUIDANCE = [
   'This efficiency guidance never overrides the user, correctness, permission checks, required verification, or cancellation.'
 ].join('\n');
 
-export const REMINDER = [
-  'The soft step budget for this turn has been reached. Reassess the remaining completion criteria using the evidence already available.',
-  'If the task and required verification are complete, provide the final result now. Otherwise, perform the specific remaining work: batch independent operations, reuse established context, prefer native edit for localized revisions, and keep large payloads in files.',
-  'This is a one-time efficiency reminder, not a hard step limit or permission to omit required verification.'
-].join('\n');
+export const REMINDER = 'Accelerate execution: batch remaining actions and conclude if criteria are met; do not omit verification.';
 
 export const ConvergenceConfig = z.object({
   enabled: z.boolean().default(true),
   injectGuidance: z.boolean().default(true),
-  softStepBudget: z.number().step(1).min(1).max(10000).default(8)
+  stepInterval: z.number().step(1).min(1).max(10000).default(8),
+  maxRemindersPerTurn: z.number().step(1).min(1).max(100).default(4),
+  softStepBudget: z.number().step(1).min(1).max(10000)
 });
 
 /**
- * Add lightweight convergence guidance and a one-time soft step budget notice
+ * Add lightweight convergence guidance and periodic soft acceleration notices
  * without taking over the official loop's control flow or termination semantics.
  */
 export function applyConvergence(ctx, raw = {}) {
-  const config = ConvergenceConfig(raw);
+  const effectiveInterval = (raw.softStepBudget !== undefined && (raw.stepInterval === undefined || raw.stepInterval === 8))
+    ? raw.softStepBudget
+    : (raw.stepInterval ?? raw.softStepBudget ?? 8);
+  const config = ConvergenceConfig({
+    ...raw,
+    stepInterval: effectiveInterval
+  });
   if (!config.enabled) return null;
 
   const states = new WeakMap();
@@ -46,7 +50,9 @@ export function applyConvergence(ctx, raw = {}) {
         remindersSent: 0,
         reminderCharsAdded: 0,
         toolResults: 0,
-        concluded: false
+        concluded: false,
+        stepHasError: false,
+        lastStepHadError: false
       };
       if (typeof session.snapshotEvents === 'function') {
         for (const event of session.snapshotEvents()) {
@@ -83,7 +89,9 @@ export function applyConvergence(ctx, raw = {}) {
         reminderCharsAdded: 0,
         startSeq: event.seq,
         toolResults: 0,
-        concluded: false
+        concluded: false,
+        stepHasError: false,
+        lastStepHadError: false
       });
       return;
     }
@@ -93,6 +101,8 @@ export function applyConvergence(ctx, raw = {}) {
       state.steps++;
       state.toolResults = 0;
       state.concluded = false;
+      state.lastStepHadError = state.stepHasError;
+      state.stepHasError = false;
     }
     if (event.type === 'user/message' && event.data.source?.kind === SOURCE) {
       state.reminded = true;
@@ -106,6 +116,10 @@ export function applyConvergence(ctx, raw = {}) {
     const state = states.get(exec.agent.session);
     if (!state) return;
     state.toolResults++;
+    if (result?.isError || result?.error) {
+      state.stepHasError = true;
+      state.lastStepHadError = true;
+    }
     state.concluded ||= result.concludesTurn === true;
   });
 
@@ -114,14 +128,24 @@ export function applyConvergence(ctx, raw = {}) {
     if (decision.kind !== 'enter' || signal.aborted) return decision;
     if (decision.messages.length === 0 && (step === 1 || messages.length > 0)) return decision;
     const state = stateFor(agent.session, turn);
-    if (!state || state.reminded || state.steps < config.softStepBudget) return decision;
+    if (!state) return decision;
+
+    const interval = config.stepInterval ?? 8;
+    const maxReminders = config.maxRemindersPerTurn ?? 4;
+    const currentStep = step ?? (state.steps + 1);
+    const nextDueStep = (state.remindersSent + 1) * interval;
+
+    if (state.remindersSent >= maxReminders) return decision;
+    if (currentStep < nextDueStep) return decision;
+    if (state.lastStepHadError || state.stepHasError) return decision;
     if (decision.messages.length === 0 && (state.toolResults === 0 || state.concluded)) return decision;
+
     const reminder = createUserMessage({
       content: [{ type: 'text', text: REMINDER }],
       source: {
         kind: SOURCE,
         form: 'notice',
-        summary: 'Reassess remaining work after the soft step budget.'
+        summary: 'Accelerate execution and conclude when criteria are met.'
       }
     });
     return { ...decision, messages: [...decision.messages, reminder] };

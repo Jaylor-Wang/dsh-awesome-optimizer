@@ -3,7 +3,7 @@
 > Non-invasive runtime policy, PTC-backed composite batch tools, soft convergence guidance, and A/B turn telemetry plugin for the official DeepSeek Harness (`@deepseek-ai/dsh-agent-loop`).
 
 [![Release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-plugin-agent-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-plugin-agent-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-13%20passed-brightgreen.svg)](test)
+[![Tests](https://img.shields.io/badge/tests-14%20passed-brightgreen.svg)](test)
 [![English](https://img.shields.io/badge/lang-English-blue.svg)](README.md)
 [![简体中文](https://img.shields.io/badge/lang-简体中文-red.svg)](README.zh.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -29,8 +29,9 @@
    - Registers `read_batch` to read up to `maxBatchFiles` (`10`) files in a single tool call.
    - Dispatches every sub-read through `ToolExecutionPipeline` (`tool/ptc-dispatch-start` / `tool/ptc-dispatch`) so all DSH sandbox permissions and policy hooks remain enforced.
 6. **Lightweight Soft Convergence (`src/convergence.js`)**:
-   - Injects batching/efficiency guidance and a one-time soft step budget notice (`softStepBudget: 8`).
-   - **Important**: A soft budget notice appends one user message (`source.kind = "optimizer-convergence"`). It is **not** a hard stop, does not guarantee fewer model requests on its own, and adds a small input token cost tracked by telemetry.
+   - Injects batching/efficiency guidance and periodic micro-directive reminders (`stepInterval: 8`, `maxRemindersPerTurn: 4`).
+   - Automatically suppresses reminders when preceding tool calls fail to allow unimpeded debugging.
+   - **Important**: Soft reminder notices append a concise micro-directive user message (`source.kind = "optimizer-convergence"`). It is **not** a hard stop, does not guarantee fewer model requests on its own, and adds minimal input tokens tracked by telemetry.
 7. **Objective A/B Telemetry (`src/telemetry.js`)**:
    - Tracks `modelRequests`, `toolCalls`, `ptcSubCalls`, `toolBatches`, `parallelismRatio` (`toolCalls / toolBatches`), `failedToolCalls`, `wallClockMs`, `firstTokenMs` (`p50`/`p95`), token usage, and prompt history prefix stability (`prefixChanges`).
 
@@ -62,7 +63,8 @@
         convergence:
           enabled: true
           injectGuidance: true
-          softStepBudget: 8
+          stepInterval: 8
+          maxRemindersPerTurn: 4
         telemetry:
           enabled: true
           trackStreams: true

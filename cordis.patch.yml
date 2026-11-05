@@ -23,7 +23,8 @@
         convergence:
           enabled: true
           injectGuidance: true
-          softStepBudget: 8
+          stepInterval: 8
+          maxRemindersPerTurn: 4
         telemetry:
           enabled: true
           trackStreams: true
