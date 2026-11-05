@@ -113,3 +113,37 @@ test('fileMutationPolicy blocks large full-file overwrites when mode is enforce 
     await host.dispose();
   }
 });
+
+test('fileMutationPolicy blocks large full-file overwrites via ctx.fs backend check even without prior read', async () => {
+  const largeOverwrite = 'Z'.repeat(8500);
+  const host = await createTestRuntime({
+    files: {
+      'backend-only-file.ts': 'export const backend = "data";\n'
+    },
+    optimizerConfig: {
+      fileMutationPolicy: {
+        mode: 'enforce',
+        minLargeWriteBytes: 8192
+      }
+    },
+    script: [
+      // Direct write without any prior read in this turn:
+      [call('w-blind', 'write', { file_path: 'backend-only-file.ts', content: largeOverwrite })],
+      [call('e-fix', 'edit', { file_path: 'backend-only-file.ts', old_string: '"data"', new_string: '"updated"' })],
+      [{ type: 'text', text: 'Blocked overwrite and switched to edit.' }]
+    ]
+  });
+
+  try {
+    await host.run('Overwrite backend-only-file.ts blindly');
+    assert.equal(host.errors.length, 0);
+    const summary = host.fileMutationPolicy.getSummary(host.agent.session);
+    assert.equal(summary.largeWriteViolations, 1);
+    assert.equal(summary.largeWritesBlocked, 1);
+    assert.equal(summary.editsCount, 1);
+    assert.equal(host.virtualFs.get('backend-only-file.ts'), 'export const backend = "updated";\n');
+  } finally {
+    await host.dispose();
+  }
+});
+

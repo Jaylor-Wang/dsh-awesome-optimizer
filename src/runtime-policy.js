@@ -14,7 +14,7 @@ export const RuntimePolicyConfig = z.object({
 });
 
 /**
- * Normalize file path representation (forward slashes, lowercase drive letters on Windows, trim).
+ * Normalize path separators and Windows path casing for stable tool identities.
  */
 export function normalizePath(filePath, cwd = '') {
   if (typeof filePath !== 'string' || !filePath.trim()) return '';
@@ -23,15 +23,19 @@ export function normalizePath(filePath, cwd = '') {
   if (normalizedCwd && !path.posix.isAbsolute(normalized) && !/^[a-zA-Z]:\//.test(normalized)) {
     normalized = path.posix.join(normalizedCwd, normalized);
   }
+  const isWindowsPath = /^[a-zA-Z]:\//.test(normalized) || /^\/\/[^/]+\//.test(normalized);
   if (/^[a-zA-Z]:\//.test(normalized)) {
     normalized = normalized[0].toLowerCase() + normalized.slice(1);
   }
   normalized = path.posix.normalize(normalized);
+  if (isWindowsPath && filePath.trim().replace(/\\/g, '/').startsWith('//') && !normalized.startsWith('//')) {
+    normalized = `/${normalized}`;
+  }
   if (normalized.length > 1 && normalized.endsWith('/') && !/^[a-z]:\/$/.test(normalized)) {
     normalized = normalized.replace(/\/+$/, '');
   }
   if (normalized === '.') return '';
-  return normalized;
+  return isWindowsPath ? normalized.toLowerCase() : normalized;
 }
 
 /**
@@ -60,16 +64,19 @@ export function computeFingerprint({ name, targetPath, opClass, errorCode, isErr
   return createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 16);
 }
 
-function stableValue(value) {
+function stableValue(value, cwd = '', key = '') {
   if (typeof value === 'string') {
+    if (['file_path', 'path', 'targetPath', 'workdir', 'cwd'].includes(key)) {
+      return normalizePath(value, cwd);
+    }
     return {
       bytes: Buffer.byteLength(value, 'utf8'),
       hash: createHash('sha256').update(value).digest('hex').slice(0, 16)
     };
   }
   if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map(stableValue);
-  return Object.fromEntries(Object.keys(value).sort().map(key => [key, stableValue(value[key])]));
+  if (Array.isArray(value)) return value.map(item => stableValue(item, cwd));
+  return Object.fromEntries(Object.keys(value).sort().map(childKey => [childKey, stableValue(value[childKey], cwd, childKey)]));
 }
 
 function invocationKey(name, args, classified, cwd) {
@@ -78,7 +85,7 @@ function invocationKey(name, args, classified, cwd) {
     opClass: classified.opClass,
     targetPath: normalizePath(classified.targetPath, cwd),
     byteLength: classified.byteLength,
-    args: stableValue(args)
+    args: stableValue(args, cwd)
   };
   return createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0, 16);
 }

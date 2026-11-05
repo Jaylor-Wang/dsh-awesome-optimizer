@@ -9,6 +9,7 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import ToolsService from '@deepseek-ai/dsh-tools';
 import * as nativeExecutor from '@deepseek-ai/dsh-tool-executor-native';
+import { normalizePath } from '../../src/runtime-policy.js';
 import optimizer from '../../src/index.js';
 
 export const userMessage = text => createUserMessage({
@@ -125,6 +126,32 @@ export async function createTestRuntime({
     await mount(LlmRuntime);
     await mount(ToolsService);
     await mount(nativeExecutor);
+
+    const fsFixture = {
+      async resolve(filePath, opts) {
+        opts?.signal?.throwIfAborted();
+        const targetKey = normalizePath(filePath, opts?.cwd ?? '');
+        return {
+          targetKey,
+          displayPath: filePath
+        };
+      },
+      async stat(target, signal) {
+        signal?.throwIfAborted();
+        if (!target) return undefined;
+        for (const [key, content] of virtualFs.entries()) {
+          if (normalizePath(key) === normalizePath(target.targetKey) || key === target.displayPath) {
+            return {
+              version: '1',
+              type: 'file',
+              size: Buffer.byteLength(content, 'utf8')
+            };
+          }
+        }
+        return undefined;
+      }
+    };
+    ctx.provide('fs', fsFixture);
 
     ctx.on('agent/error', ({ error }) => owner.errors.push(error));
     ctx.on('session/event', (_session, event) => owner.events.push(event));

@@ -5,6 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createTestRuntime, call } from './support/runtime.js';
 import { compareTurnSummaries } from '../src/index.js';
+import { AgentTelemetryManager } from '../src/telemetry.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -71,6 +72,37 @@ test('agentTelemetry tracks parallel tool batches, token usage, prefix stability
   } finally {
     await host.dispose();
   }
+});
+
+test('agentTelemetry attributes interleaved streams to their session IDs', async () => {
+  const manager = new AgentTelemetryManager({ get: () => undefined });
+  const sessionA = { id: 'session-a' };
+  const sessionB = { id: 'session-b' };
+  manager.onSessionEvent(sessionA, { type: 'turn/start', data: { turn: 1 } });
+  manager.onSessionEvent(sessionB, { type: 'turn/start', data: { turn: 1 } });
+
+  async function* usageStream(inputTokens) {
+    yield { type: 'usage', usage: { inputTokens, outputTokens: 1 } };
+  }
+
+  const streamA = manager.wrapStream({ sessionId: 'session-a', messages: [] }, () => usageStream(11));
+  const streamB = manager.wrapStream({ sessionId: 'session-b', messages: [] }, () => usageStream(29));
+  await Promise.all([
+    (async () => { for await (const _chunk of streamA) {} })(),
+    (async () => { for await (const _chunk of streamB) {} })()
+  ]);
+
+  assert.equal(manager.getSummary(sessionA).modelRequests, 1);
+  assert.equal(manager.getSummary(sessionA).usage.inputTokens, 11);
+  assert.equal(manager.getSummary(sessionB).modelRequests, 1);
+  assert.equal(manager.getSummary(sessionB).usage.inputTokens, 29);
+
+  manager.onSessionDisposed(sessionA);
+  for await (const _chunk of manager.wrapStream(
+    { sessionId: 'session-a', messages: [] },
+    () => usageStream(101)
+  )) {}
+  assert.equal(manager.getSummary(sessionA).usage.inputTokens, 11);
 });
 
 test('cordis.patch.yml and source files preserve official loop ownership and never mutate agent/request', () => {

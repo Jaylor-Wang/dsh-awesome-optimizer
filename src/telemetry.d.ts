@@ -66,6 +66,7 @@ export declare class AgentTelemetryManager {
   readonly config: TelemetryOptions;
   constructor(ctx: Context, config?: TelemetryOptions);
   onSessionEvent(session: unknown, event: any): void;
+  onSessionDisposed(session: unknown): void;
   wrapStream(options: any, next: () => AsyncIterable<any>): AsyncIterable<any>;
   getSummary(session?: unknown, turn?: number): TurnTelemetrySummary;
 }

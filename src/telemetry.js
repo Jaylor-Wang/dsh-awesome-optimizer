@@ -83,6 +83,7 @@ export class AgentTelemetryManager {
     this.ctx = ctx;
     this.config = TelemetryConfig(config);
     this.sessionStates = new WeakMap();
+    this.sessionsById = new Map();
     this.activeSession = null;
   }
 
@@ -120,6 +121,7 @@ export class AgentTelemetryManager {
 
   onSessionEvent(session, event) {
     this.activeSession = session;
+    if (session?.id !== undefined) this.sessionsById.set(session.id, session);
     if (event.type === 'turn/start') {
       const state = this.#createTurnState(event.data.turn);
       this.sessionStates.set(session, state);
@@ -163,8 +165,17 @@ export class AgentTelemetryManager {
     }
   }
 
+  onSessionDisposed(session) {
+    if (session?.id !== undefined && this.sessionsById.get(session.id) === session) {
+      this.sessionsById.delete(session.id);
+    }
+    if (this.activeSession === session) this.activeSession = null;
+  }
+
   wrapStream(options, next) {
-    const session = this.activeSession;
+    const session = options?.sessionId !== undefined
+      ? this.sessionsById.get(options.sessionId)
+      : this.activeSession;
     const state = session ? this.sessionStates.get(session) : null;
     if (!state) return next();
 
@@ -301,6 +312,9 @@ export function applyTelemetry(ctx, rawConfig = {}) {
 
   ctx.on('session/event', (session, event) => {
     manager.onSessionEvent(session, event);
+  });
+  ctx.on('session/disposed', session => {
+    manager.onSessionDisposed(session);
   });
 
   if (config.trackStreams) {

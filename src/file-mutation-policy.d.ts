@@ -21,15 +21,17 @@ export interface FileMutationPolicySummary {
 
 export declare const MUTATION_SOURCE: 'optimizer-file-mutation-policy';
 export declare const FileMutationPolicyConfig: z<FileMutationPolicyOptions>;
-export declare function fileExists(filePath?: string | null, cwd?: string): boolean;
+export declare function fileExists(filePath?: string | null, cwd?: string, fsService?: any, signal?: AbortSignal): Promise<boolean>;
 
 export declare class FileMutationPolicyManager {
   readonly config: FileMutationPolicyOptions;
-  constructor(config?: FileMutationPolicyOptions);
+  fsService?: any;
+  workingDirectory?: any;
+  constructor(config?: FileMutationPolicyOptions, fsService?: any, workingDirectory?: any);
   onTurnStart(session: unknown, turn: number): void;
   onTurnEnd(session: unknown): void;
   onCwdChange(session: unknown, newCwd: string): void;
-  evaluateToolExecution(session: unknown, exec: any, toolsService?: any): any;
+  evaluateToolExecution(session: unknown, exec: any, toolsService?: any, fsService?: any): Promise<any>;
   recordResult(session: unknown, exec: any, result: any): void;
   getSummary(session: unknown, turn?: number): FileMutationPolicySummary;
 }

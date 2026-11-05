@@ -4,8 +4,8 @@ import { createTestRuntime, call } from './support/runtime.js';
 import { normalizePath, sizeBucket, computeFingerprint } from '../src/runtime-policy.js';
 
 test('normalizePath and computeFingerprint produce deterministic values across platforms', () => {
-  assert.equal(normalizePath('E:\\Github\\foo\\bar.js'), 'e:/Github/foo/bar.js');
-  assert.equal(normalizePath('src/index.js', 'E:\\Github\\repo'), 'e:/Github/repo/src/index.js');
+  assert.equal(normalizePath('E:\\Github\\Foo\\bar.js'), 'e:/github/foo/bar.js');
+  assert.equal(normalizePath('src\\Foo\\index.js', 'E:\\Github\\Repo'), 'e:/github/repo/src/foo/index.js');
   assert.equal(sizeBucket(0), '0');
   assert.equal(sizeBucket(512), '<1K');
   assert.equal(sizeBucket(4096), '1K-8K');
@@ -55,6 +55,34 @@ test('runtimePolicy blocks repeated identical failing tool invocations after noP
     assert.equal(toolResults.length, 3);
     const thirdResultText = toolResults[2].data.message.content.map(b => b.text).join('');
     assert.match(thirdResultText, /NO_PROGRESS/);
+  } finally {
+    await host.dispose();
+  }
+});
+
+test('runtimePolicy treats Windows paths with different casing as the same failed invocation', async () => {
+  const host = await createTestRuntime({
+    optimizerConfig: {
+      runtimePolicy: { mode: 'enforce', noProgressLimit: 2 }
+    },
+    readHandler() {
+      throw new Error('stable missing-file failure');
+    },
+    script: [
+      [call('case-1', 'read', { file_path: 'E:\\Workspace\\Repo\\Missing.txt' })],
+      [call('case-2', 'read', { file_path: 'e:\\workspace\\repo\\missing.txt' })],
+      [call('case-3', 'read', { file_path: 'E:\\WORKSPACE\\REPO\\MISSING.TXT' })],
+      [{ type: 'text', text: 'Stopped retrying the missing file.' }]
+    ]
+  });
+
+  try {
+    await host.run('Read the missing file');
+    assert.equal(host.errors.length, 0);
+    assert.equal(host.calls.length, 2);
+    const toolResults = host.events.filter(event => event.type === 'tool/result');
+    const blockedText = toolResults.at(-1).data.message.content.map(block => block.text).join('');
+    assert.match(blockedText, /NO_PROGRESS/);
   } finally {
     await host.dispose();
   }

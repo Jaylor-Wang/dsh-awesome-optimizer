@@ -13,10 +13,23 @@ export const FileMutationPolicyConfig = z.object({
 });
 
 /**
- * Check safely whether a file path exists on the local filesystem.
+ * Check safely whether a file path exists via ctx.fs backend if available,
+ * falling back to local filesystem check.
  */
-export function fileExists(filePath, cwd = '') {
+export async function fileExists(filePath, cwd = '', fsService, signal) {
   if (!filePath || typeof filePath !== 'string') return false;
+  if (fsService && typeof fsService.resolve === 'function') {
+    try {
+      const target = await fsService.resolve(filePath, { cwd, signal });
+      if (typeof fsService.stat === 'function') {
+        const info = await fsService.stat(target, signal);
+        return info !== undefined;
+      }
+      return target !== undefined;
+    } catch {
+      return false;
+    }
+  }
   try {
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
     return fs.existsSync(resolved);
@@ -29,8 +42,10 @@ export function fileExists(filePath, cwd = '') {
  * Manager tracking file reads, writes, and enforcing edit vs write constraints.
  */
 export class FileMutationPolicyManager {
-  constructor(config = {}) {
+  constructor(config = {}, fsService, workingDirectory) {
     this.config = FileMutationPolicyConfig(config);
+    this.fsService = fsService;
+    this.workingDirectory = workingDirectory;
     this.sessionStates = new WeakMap();
   }
 
@@ -81,7 +96,7 @@ export class FileMutationPolicyManager {
     state.pendingCreates.clear();
   }
 
-  evaluateToolExecution(session, exec, toolsService) {
+  async evaluateToolExecution(session, exec, toolsService, fsService = this.fsService) {
     if (this.config.mode === 'off' || !session || !exec) {
       return { allowed: true, reason: 'policy-off' };
     }
@@ -111,7 +126,8 @@ export class FileMutationPolicyManager {
     }
 
     const createPending = [...state.pendingCreates.values()].includes(normPath);
-    const knownExisting = state.knownExistingFiles.has(normPath) || fileExists(targetPath, state.cwd);
+    const existsInBackend = await fileExists(targetPath, state.cwd, fsService, exec.signal);
+    const knownExisting = state.knownExistingFiles.has(normPath) || existsInBackend;
     if (!knownExisting && !createPending) {
       state.pendingCreates.set(exec.callId, normPath);
       return { allowed: true, reason: 'target-does-not-exist' };
@@ -233,7 +249,9 @@ export function applyFileMutationPolicy(ctx, rawConfig = {}) {
   const config = FileMutationPolicyConfig(rawConfig);
   if (config.mode === 'off') return null;
 
-  const manager = new FileMutationPolicyManager(config);
+  const fsService = ctx.get ? ctx.get('fs') : undefined;
+  const workingDirectory = ctx.get ? ctx.get('workingDirectory') : undefined;
+  const manager = new FileMutationPolicyManager(config, fsService, workingDirectory);
 
   ctx.on('session/event', (session, event) => {
     if (event.type === 'turn/start') {
@@ -247,7 +265,8 @@ export function applyFileMutationPolicy(ctx, rawConfig = {}) {
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (!exec.agent) return next();
-    const decision = manager.evaluateToolExecution(exec.agent.session, exec, ctx.tools);
+    const effectiveFs = (ctx.get ? ctx.get('fs') : undefined) ?? manager.fsService;
+    const decision = await manager.evaluateToolExecution(exec.agent.session, exec, ctx.tools, effectiveFs);
     if (!decision.allowed) {
       return {
         kind: 'deny',
