@@ -1,0 +1,29 @@
+# Purely additive policy, composite-tool, and telemetry plugin.
+# Never disables or replaces @deepseek-ai/dsh-agent-loop.
+- insert:
+    - id: agent-optimizer
+      name: dsh-plugin-agent-optimizer
+      config:
+        enabled: true
+        runtimePolicy:
+          mode: enforce
+          noProgressLimit: 2
+          recoveryAttemptLimit: 1
+          minLargeWriteBytes: 8192
+          maxShellCommandBytes: 4096
+          maxInlineScriptBytes: 512
+        fileMutationPolicy:
+          mode: observe
+          minLargeWriteBytes: 8192
+        recoverFailedWrites: true
+        compositeTools:
+          enabled: true
+          readBatch: true
+          maxBatchFiles: 10
+        convergence:
+          enabled: true
+          injectGuidance: true
+          softStepBudget: 8
+        telemetry:
+          enabled: true
+          trackStreams: true

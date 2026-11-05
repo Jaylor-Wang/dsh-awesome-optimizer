@@ -1,0 +1,110 @@
+{
+  "name": "dsh-plugin-agent-optimizer",
+  "version": "0.5.0",
+  "description": "Non-invasive runtime policy, composite batch tooling, soft convergence guidance, and A/B telemetry plugin for the official DeepSeek Harness (dsh) agent loop.",
+  "type": "module",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./policy": {
+      "types": "./src/runtime-policy.d.ts",
+      "default": "./src/runtime-policy.js"
+    },
+    "./mutation-policy": {
+      "types": "./src/file-mutation-policy.d.ts",
+      "default": "./src/file-mutation-policy.js"
+    },
+    "./recovery": {
+      "types": "./src/failure-recovery.d.ts",
+      "default": "./src/failure-recovery.js"
+    },
+    "./composite-tools": {
+      "types": "./src/composite-tools.d.ts",
+      "default": "./src/composite-tools.js"
+    },
+    "./convergence": {
+      "types": "./src/convergence.d.ts",
+      "default": "./src/convergence.js"
+    },
+    "./telemetry": {
+      "types": "./src/telemetry.d.ts",
+      "default": "./src/telemetry.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "scripts/typecheck.mjs",
+    "scripts/benchmark.mjs",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "dsh": ">=0.2.2-rc.1"
+  },
+  "scripts": {
+    "setup:local": "node scripts/setup-local.mjs",
+    "test": "node --test --test-timeout=15000 test/*.test.js",
+    "typecheck": "node scripts/typecheck.mjs",
+    "benchmark": "node scripts/benchmark.mjs"
+  },
+  "author": "Jaylor-Wang",
+  "license": "MIT",
+  "homepage": "https://github.com/Jaylor-Wang/dsh-plugin-agent-optimizer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jaylor-Wang/dsh-plugin-agent-optimizer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Jaylor-Wang/dsh-plugin-agent-optimizer/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "agent-loop",
+    "runtime-policy",
+    "convergence",
+    "telemetry",
+    "composite-tools"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0",
+    "@deepseek-ai/dsh-agent": "*",
+    "@deepseek-ai/dsh-agent-loop": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-session": "*",
+    "@deepseek-ai/dsh-system-prompt": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/schemastery": ">=3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-agent": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-agent-loop": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
+  }
+}
