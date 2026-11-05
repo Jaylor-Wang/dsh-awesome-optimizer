@@ -2,6 +2,8 @@
 
 > 围绕官方 DeepSeek Harness (`@deepseek-ai/dsh-agent-loop`) 构建的非侵入式运行期防护、PTC 复合批处理工具、轻量软预算提醒与客观 A/B 轮次度量插件。
 
+[![Release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-plugin-agent-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-plugin-agent-optimizer/releases)
+[![Tests](https://img.shields.io/badge/tests-10%20passed-brightgreen.svg)](test)
 [![English](https://img.shields.io/badge/lang-English-blue.svg)](README.md)
 [![简体中文](https://img.shields.io/badge/lang-简体中文-red.svg)](README.zh.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
