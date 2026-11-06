@@ -12,12 +12,12 @@
 
 ---
 
-## v1.1.0 版本重要更新
+## v1.5.0 版本重要更新
 
-- **全新 `SYSTEM.md` 独立接管与 80% Token 极致瘦身 (`placement: "replace-all"`)**：彻底剥离官方约 2,000 tokens 的冗长提示词（重复单工具解释、Web GUI 指令等），全局统一由独立的 `~/.dsh/SYSTEM.md`（约 380 tokens）作为唯一最高指令集，每轮为模型节省约 1.6K tokens 上下文空间，大幅降低长会话成本与记忆漂移。
-- **真正开箱即用（Zero-Config by Default）**：内置默认开启 `replace-all`、毫秒级热重载与文件级联探测机制。用户安装后无需在全局 `cordis.patch.yml` 中编写任何多余配置，仅在需要定制或禁用时才需覆盖。
-- **PTC 原生双批处理加速 (`read_batch` / `edit_batch`)**：原生支持单次调用并发探测多个文件切片，以及单次顺序执行最多 10 处跨多文件的字面量精准文本替换，彻底解决复杂重构任务中网络往返过长与 Unified Diff 格式脆弱的痛点。
-- **Windows 深度工程加固与异常熔断**：智能拦截超长 Shell 命令与内联脚本，杜绝 Windows `spawn ENAMETOOLONG` 崩溃；内置未配对 `justification` 单次快速重放恢复（`retry_failed_write`）与连续无进展重复失败硬拦截（`NO_PROGRESS`）。
+- **RFC 2119 强约束语气与注意力锚定加固**：收敛软提醒全面升级为 `NEVER omit verification.`，杜绝步数压力下的偷懒与提前交卷；在常驻收敛规范、推荐模板及拦截提示中全局统一大写强约束词（`ONLY`、`NEVER`、`STRICTLY`）。
+- **工具定义与官方 DSH 契约像素级对齐**：`edit_batch` 参数描述精准对齐官方 `edit` 工具约定（显式要求提供 `file_path` 优先顺序），彻底消除动词混淆（统一为 `produce deliverables`），确保模型复用对原生工具的先验理解。
+- **细粒度复合网络命令拦截放行**：精准优化 `CHAINED_NETWORK_COMMAND` 防护规则，在彻底杜绝 `npm publish` 等 Windows 凭据与发布操作悬挂的同时，完全放行本地与协同的复合 `git push` 流水线。
+- **全新 `SYSTEM.md` 独立接管与 80% Token 极致瘦身 (`placement: "replace-all"`)**：彻底剥离官方约 2,000 tokens 的冗长提示词，全局统一由独立的 `~/.dsh/SYSTEM.md`（约 380 tokens）作为唯一最高指令集，每轮节省约 1.6K tokens 上下文空间。
 
 ---
 

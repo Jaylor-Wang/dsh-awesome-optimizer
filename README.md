@@ -12,12 +12,12 @@ High-performance, non-invasive runtime policy, PTC-backed composite batch toolin
 
 ---
 
-## Highlights in v1.1.0
+## Highlights in v1.5.0
 
-- **Standalone `SYSTEM.md` Engine & ~80% Token Reduction (`placement: "replace-all"`)**: Completely prunes verbose official prompt sections (~2,000 tokens of duplicate single-tool instructions, Web GUI commands, etc.), allowing a concise, standalone `~/.dsh/SYSTEM.md` (~380 tokens) to govern as the single authority. Saves ~1.6K tokens per turn, significantly reducing multi-turn cost and context drift.
-- **Zero-Config by Default**: Built-in defaults activate `replace-all`, millisecond hot-reload, and dual-layer discovery out of the box. No extra configuration lines needed in `cordis.patch.yml`.
-- **PTC Native Composite Batch Tooling (`read_batch` / `edit_batch`)**: Read multiple file snippets concurrently in a single tool call, and apply sequential literal text replacements across one or more files in one go—eliminating fragile unified diffs and network round-trip overhead.
-- **Windows Hardening & Defensive Recovery**: Intercepts oversized shell commands and multiline inline scripts before Windows `spawn ENAMETOOLONG` occurs; provides single-turn replay recovery (`retry_failed_write`) for unpaired justification errors and hard-stops no-progress failure loops (`NO_PROGRESS`).
+- **RFC 2119 Restrictive Modal Capitalization & Salience**: Convergence reminders enforce `NEVER omit verification.` to block premature completion under step pressure. Restrictive boundaries (`ONLY`, `NEVER`, `STRICTLY`) are capitalized consistently across guidance, templates, and runtime intercept reasons.
+- **Precision Tool Alignment with Official DSH Contracts**: `edit_batch` schema and parameter descriptions strictly mirror official `edit` tool semantics (`Provide file_path before old_string and new_string in the arguments`). Decoupled verbs (`produce deliverables`) prevent homonym collisions with native tools.
+- **Refined Command Chaining Policy**: Relaxed `CHAINED_NETWORK_COMMAND` to safely permit chained non-blocking local commands like `git push` while strictly preventing Windows hanging on credentials and publish (`npm publish`).
+- **Standalone `SYSTEM.md` Engine & ~80% Token Reduction (`placement: "replace-all"`)**: Completely prunes verbose official prompt sections, allowing a concise, standalone `~/.dsh/SYSTEM.md` (~380 tokens) to govern as the single authority. Saves ~1.6K tokens per turn.
 
 ---
 
