@@ -29,10 +29,11 @@ const LEGACY_JARGON = [
 
 const DIRECTIVE_CASING = [
   { pattern: /(?<=\b(?:is|are|be|operate|act|remain)\s+)strictly\b/g, replacement: 'STRICTLY' },
-  { pattern: /(?<=[-\*\s]\s*)strictly\b/g, replacement: 'STRICTLY' },
-  { pattern: /(?<=[-\*\s]\s*)never\b/g, replacement: 'NEVER' },
-  { pattern: /(?<=[-\*\s]\s*)must\b/g, replacement: 'MUST' },
-  { pattern: /(?<=[-\*\s]\s*)only\b/g, replacement: 'ONLY' }
+  { pattern: /(?<=[-\*]\s+)strictly\b/g, replacement: 'STRICTLY' },
+  { pattern: /(?<=[-\*]\s+)never\b/g, replacement: 'NEVER' },
+  { pattern: /(?<=[-\*]\s+)must\b/g, replacement: 'MUST' },
+  { pattern: /(?<=:\s*)only\b/g, replacement: 'ONLY' },
+  { pattern: /(?<=[-\*]\s+)only\b/g, replacement: 'ONLY' }
 ];
 
 /**
