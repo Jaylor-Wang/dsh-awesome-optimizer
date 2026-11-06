@@ -91,6 +91,7 @@ export async function createTestRuntime({
   editHandler,
   bashHandler,
   configureTools,
+  workingDirectory,
   agentOptions
 } = {}) {
   const ctx = new Context();
@@ -152,6 +153,13 @@ export async function createTestRuntime({
       }
     };
     ctx.provide('fs', fsFixture);
+    if (workingDirectory) {
+      ctx.provide('workingDirectory', {
+        get(_session) {
+          return workingDirectory;
+        }
+      });
+    }
 
     ctx.on('agent/error', ({ error }) => owner.errors.push(error));
     ctx.on('session/event', (_session, event) => owner.events.push(event));

@@ -4,6 +4,7 @@ import type { RuntimePolicyOptions } from './runtime-policy.d.ts';
 import type { FileMutationPolicyOptions } from './file-mutation-policy.d.ts';
 import type { CompositeToolsOptions } from './composite-tools.d.ts';
 import type { ConvergenceOptions } from './convergence.d.ts';
+import type { CustomPromptOptions } from './custom-prompt.d.ts';
 import type { TelemetryOptions } from './telemetry.d.ts';
 
 export interface AgentOptimizerConfig {
@@ -15,6 +16,7 @@ export interface AgentOptimizerConfig {
   recoverFailedWrites?: boolean;
   compositeTools?: CompositeToolsOptions;
   convergence?: ConvergenceOptions;
+  customPrompt?: CustomPromptOptions;
   telemetry?: TelemetryOptions;
 }
 
@@ -66,6 +68,14 @@ export {
   type ConvergenceSummary,
   type ConvergenceService
 } from './convergence.d.ts';
+export {
+  CustomPromptManager,
+  applyCustomPrompt,
+  SECTION_NAME as CUSTOM_PROMPT_SECTION,
+  type CustomPromptOptions,
+  type MergeStrategy,
+  type PlacementMode
+} from './custom-prompt.d.ts';
 export {
   AgentTelemetryManager,
   compareTurnSummaries,

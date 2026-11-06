@@ -4,6 +4,7 @@ import { applyFileMutationPolicy, FileMutationPolicyConfig, FileMutationPolicyMa
 import { applyFailureRecovery, RecoveryRecord, RECOVERY_SOURCE, RETRY_TOOL, PAIRING_ERROR } from './failure-recovery.js';
 import { applyCompositeTools, CompositeToolsConfig, READ_BATCH_TOOL, EDIT_BATCH_TOOL } from './composite-tools.js';
 import { applyConvergence, ConvergenceConfig, SOURCE as CONVERGENCE_SOURCE, GUIDANCE, REMINDER } from './convergence.js';
+import { applyCustomPrompt, CustomPromptConfig, CustomPromptManager, SECTION_NAME as CUSTOM_PROMPT_SECTION } from './custom-prompt.js';
 import { applyTelemetry, TelemetryConfig, AgentTelemetryManager, compareTurnSummaries } from './telemetry.js';
 
 export const name = 'dsh-plugin-agent-optimizer';
@@ -18,6 +19,7 @@ export const Config = z.object({
   recoverFailedWrites: z.boolean().default(true),
   compositeTools: CompositeToolsConfig.default({}),
   convergence: ConvergenceConfig.default({}),
+  customPrompt: CustomPromptConfig.default({}),
   telemetry: TelemetryConfig.default({})
 });
 
@@ -54,6 +56,10 @@ export function apply(ctx, raw = {}) {
   const convergenceService = applyConvergence(ctx, convergenceConfig);
   if (convergenceService) ctx.provide('convergenceGuidance', convergenceService);
 
+  const customPromptConfig = raw.customPrompt ?? config.customPrompt ?? {};
+  const customPromptManager = applyCustomPrompt(ctx, customPromptConfig);
+  if (customPromptManager) ctx.provide('customPrompt', customPromptManager);
+
   const telemetryConfig = raw.telemetry ?? config.telemetry ?? {};
   const telemetryManager = applyTelemetry(ctx, telemetryConfig);
   if (telemetryManager) ctx.provide('agentTelemetry', telemetryManager);
@@ -73,6 +79,9 @@ export {
   RECOVERY_SOURCE,
   POLICY_SOURCE,
   MUTATION_SOURCE,
+  CUSTOM_PROMPT_SECTION,
+  CustomPromptManager,
+  applyCustomPrompt,
   GUIDANCE,
   REMINDER
 };

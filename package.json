@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-agent-optimizer",
-  "version": "0.9.0",
-  "description": "Non-invasive runtime policy, composite batch tooling, soft convergence guidance, and A/B telemetry plugin for the official DeepSeek Harness (dsh) agent loop.",
+  "version": "1.0.0",
+  "description": "Non-invasive runtime policy, composite batch tooling, soft convergence guidance, reactive custom prompt engine, and A/B telemetry plugin for the official DeepSeek Harness (dsh) agent loop.",
   "type": "module",
   "main": "src/index.js",
   "types": "src/index.d.ts",
@@ -29,6 +29,10 @@
     "./convergence": {
       "types": "./src/convergence.d.ts",
       "default": "./src/convergence.js"
+    },
+    "./custom-prompt": {
+      "types": "./src/custom-prompt.d.ts",
+      "default": "./src/custom-prompt.js"
     },
     "./telemetry": {
       "types": "./src/telemetry.d.ts",

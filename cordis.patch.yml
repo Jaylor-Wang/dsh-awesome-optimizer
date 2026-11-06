@@ -27,6 +27,13 @@
           injectGuidance: true
           stepInterval: 8
           maxRemindersPerTurn: 4
+        customPrompt:
+          enabled: true
+          globalFile: "~/.dsh/SYSTEM.md"
+          workspaceFile: ".dsh/SYSTEM.md"
+          placement: "suffix"
+          mergeStrategy: "concat"
+          hotReload: true
         telemetry:
           enabled: true
           trackStreams: true

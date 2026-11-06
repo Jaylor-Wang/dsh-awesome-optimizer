@@ -3,7 +3,7 @@
 > 围绕官方 DeepSeek Harness (`@deepseek-ai/dsh-agent-loop`) 构建的非侵入式运行期防护、PTC 复合批处理工具、轻量软预算提醒与客观 A/B 轮次度量插件。
 
 [![Release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-plugin-agent-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-plugin-agent-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-17%20passed-brightgreen.svg)](test)
+[![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen.svg)](test)
 [![English](https://img.shields.io/badge/lang-English-blue.svg)](README.md)
 [![简体中文](https://img.shields.io/badge/lang-简体中文-red.svg)](README.zh.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -35,6 +35,10 @@
    - **客观说明**：软预算提醒会追加一条精炼的微指令 `notice` 消息，它不是硬停止条件，本身不能单靠提示词承诺减少模型请求，且产生极低输入 token 消耗（由 `telemetry` 精确记录）。
 7. **客观 A/B 度量 (`src/telemetry.js`)**：
    - 统计模型请求数（`modelRequests`）、工具调用数（`toolCalls`）、PTC 子调用数（`ptcSubCalls`）、工具并行批次比（`parallelismRatio = toolCalls / toolBatches`）、失败次数、耗时、Token 消耗与前缀稳定性（`prefixChanges`），支持与基线直接计算差值。
+8. **文件驱动响应式系统提示词定制 (`src/custom-prompt.js`)**：
+   - **双层 `SYSTEM.md` 规约**：自动寻找全局配置 `~/.dsh/SYSTEM.md`（或 `$DSH_HOME/SYSTEM.md`）与项目级工作区配置 `.dsh/SYSTEM.md`（或 `SYSTEM.md`），与面向角色的 `AGENTS.md` 权责清晰分离。
+   - **毫秒级热加载（Hot-Reload）**：基于 `fs.watch` + 防抖重载引擎，直接修改 Markdown 文件保存即刻生效，无需重启 DSH 服务。
+   - **智能级联与挂载**：支持 `concat`（全局+工作区级联合并）与 `workspace-override`（项目级完全覆盖全局）等合并策略；支持 `suffix`（默认尾部分段，具备最高约束力）、`replace-persona-suffix`（替换官方 Persona 后缀）与 `prefix` 插入模式。
 
 ---
 
