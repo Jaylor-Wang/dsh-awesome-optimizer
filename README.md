@@ -57,6 +57,8 @@ High-performance, non-invasive runtime policy, PTC-backed composite batch toolin
   Computes deterministic tool invocation fingerprints. If an identical failing tool call repeats up to `noProgressLimit` (default `2`), the plugin blocks execution at `tools/pre-execute`, forcing the agent to adapt its diagnostic approach.
 - **Windows Oversized Shell Command Interception (`EMBEDDED_SHELL_PAYLOAD_TOO_LARGE`)**:
   Automatically blocks commands exceeding `4096` bytes or inline scripts (`node -e`, `python -c`, `pwsh -Command`) exceeding `512` bytes, steering the model to write deliverables to disk first.
+- **Windows Chained Network Command Guard (`CHAINED_NETWORK_COMMAND`)**:
+  Intercepts compound shell commands that chain network/credential-bound operations (`git push`, `npm publish`) with local operations during `tools/pre-execute`. Enforces clean two-tier execution: local operations chained via `&&` for zero-RTT speed, and network operations isolated standalone to eliminate Windows process handle hanging and 120s timeouts.
 - **Full Overwrite Protection & Single-Shot Recovery (`failureRecovery`)**:
   Prevents accidental destructive `write` overwrites on existing large files when `edit` is available. Automatically registers `retry_failed_write` when a large write (8KB–1MB) is rejected due to an unpaired justification, avoiding costly regeneration.
 

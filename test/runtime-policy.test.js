@@ -121,3 +121,38 @@ test('runtimePolicy blocks oversized shell commands and large inline scripts on 
     await host.dispose();
   }
 });
+
+test('runtimePolicy blocks chained network/credential commands while allowing local compound commands and standalone network commands', async () => {
+  const chainedNetworkCmd = 'git add . && git commit -m "feat" && git push origin main && npm test';
+  const localCompoundCmd = 'git add . && git commit -m "feat" && npm test';
+  const standaloneNetworkCmd = 'git push origin main';
+
+  const host = await createTestRuntime({
+    optimizerConfig: {
+      runtimePolicy: {
+        mode: 'enforce',
+        disallowChainedNetworkCommands: true
+      }
+    },
+    script: [
+      [call('c1', 'bash', { command: chainedNetworkCmd })],
+      [call('c2', 'bash', { command: localCompoundCmd })],
+      [call('c3', 'bash', { command: standaloneNetworkCmd })],
+      [{ type: 'text', text: 'All operations safely executed.' }]
+    ]
+  });
+
+  try {
+    await host.run('Run network command checks');
+    assert.equal(host.errors.length, 0);
+    // c1 is blocked pre-execute due to chained network action; c2 and c3 are allowed and executed
+    assert.equal(host.calls.length, 2);
+    assert.equal(host.calls[0].id, 'c2');
+    assert.equal(host.calls[1].id, 'c3');
+
+    const summary = host.runtimePolicy.getSummary(host.agent.session);
+    assert.equal(summary.shellPayloadBlocks, 1);
+  } finally {
+    await host.dispose();
+  }
+});

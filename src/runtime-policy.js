@@ -10,7 +10,8 @@ export const RuntimePolicyConfig = z.object({
   recoveryAttemptLimit: z.number().step(1).min(1).max(1).default(1),
   minLargeWriteBytes: z.number().step(1).min(1).default(8192),
   maxShellCommandBytes: z.number().step(1).min(256).default(4096),
-  maxInlineScriptBytes: z.number().step(1).min(128).default(512)
+  maxInlineScriptBytes: z.number().step(1).min(128).default(512),
+  disallowChainedNetworkCommands: z.boolean().default(true)
 });
 
 /**
@@ -351,6 +352,26 @@ export class RuntimePolicyManager {
             retryable: false
           })
         };
+      }
+
+      // Guard against dangerous network/credential command chaining on Windows
+      if (this.config.disallowChainedNetworkCommands) {
+        const hasCompoundOperator = /(&&|;)/.test(cmd);
+        const hasChainedNetworkAction = /(?:^|[\s;&|])(?:git\s+push|npm\s+publish|gh\s+(?:pr|issue)\s+create)\b/i.test(cmd);
+        if (hasCompoundOperator && hasChainedNetworkAction) {
+          state.shellPayloadBlocks++;
+          state.policyDenials++;
+          if (exec.token !== undefined) state.deniedTokens.add(exec.token);
+          return {
+            kind: 'deny',
+            reason: JSON.stringify({
+              code: 'CHAINED_NETWORK_COMMAND',
+              reason: "Chaining network/credential-bound commands ('git push', 'npm publish') with other commands causes Windows process handle hanging and 120s timeouts.",
+              nextAction: "Separate into independent steps: execute local operations ('git add ... && git commit ... && npm test') first, then run network command ('git push') standalone.",
+              retryable: false
+            })
+          };
+        }
       }
     }
 

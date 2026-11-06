@@ -57,6 +57,8 @@
   基于输入参数指纹计算，当同一工具以相同参数连续失败达到 `noProgressLimit`（默认 `2` 次）时，在 `tools/pre-execute` 阶段立即硬拦截并强迫模型转换诊断思路，杜绝死循环。
 - **Windows 超大 Shell 载荷拦截 (`EMBEDDED_SHELL_PAYLOAD_TOO_LARGE`)**：
   自动拦截超过 `4096` 字节的 `bash` 命令，或超过 `512` 字节的内联脚本参数（`node -e`、`python -c`、`pwsh -Command` 等），引导模型先通过原生 `write` 落盘再执行，规避 Windows 命令行参数溢出崩溃。
+- **Windows 复合网络命令挂起防御 (`CHAINED_NETWORK_COMMAND`)**：
+  在 `tools/pre-execute` 阶段自动拦截将网络/凭据操作（`git push`、`npm publish` 等）与本地耗时操作混合串联的复合命令，强行引导模型执行两分法：本地确定性操作（`git add ... && git commit ... && npm test`）复合提速，网络发布独立把关，彻底规避 Windows 子进程句柄悬挂与 120s 超时。
 - **大文件覆写防御与快速重放恢复 (`failureRecovery`)**：
   保护已存在的大文件不被全量 `write` 误覆盖；针对大文件写入（8KB–1MB）因缺失配对 `justification` 被拒的场景，提供 `retry_failed_write` 快捷工具，由宿主从缓存直接重放，避免大模型重新生成数千行代码。
 
