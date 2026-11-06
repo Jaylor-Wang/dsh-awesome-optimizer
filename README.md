@@ -58,7 +58,7 @@ High-performance, non-invasive runtime policy, PTC-backed composite batch toolin
 - **Windows Oversized Shell Command Interception (`EMBEDDED_SHELL_PAYLOAD_TOO_LARGE`)**:
   Automatically blocks commands exceeding `4096` bytes or inline scripts (`node -e`, `python -c`, `pwsh -Command`) exceeding `512` bytes, steering the model to write deliverables to disk first.
 - **Windows Chained Network Command Guard (`CHAINED_NETWORK_COMMAND`)**:
-  Intercepts compound shell commands that chain network/credential-bound operations (`git push`, `npm publish`) with local operations during `tools/pre-execute`. Enforces clean two-tier execution: local operations chained via `&&` for zero-RTT speed, and network operations isolated standalone to eliminate Windows process handle hanging and 120s timeouts.
+  Intercepts compound shell commands that chain network/credential-bound operations (`npm publish`) with local operations during `tools/pre-execute`. Enforces clean two-tier execution: local operations chained via `&&` for zero-RTT speed, and network operations isolated standalone to eliminate Windows process handle hanging and 120s timeouts.
 - **Full Overwrite Protection & Single-Shot Recovery (`failureRecovery`)**:
   Prevents accidental destructive `write` overwrites on existing large files when `edit` is available. Automatically registers `retry_failed_write` when a large write (8KB–1MB) is rejected due to an unpaired justification, avoiding costly regeneration.
 
@@ -165,7 +165,7 @@ You are a master autonomous software engineer powered by DeepSeek Harness.
 - Modification & execution:
   - File ops: write deliverables directly. Prioritize `edit_batch` for applying targeted replacements across one or more files in a single turn. Prioritize `edit` for single partial modifications; use `write` for new files or necessary full replacements. Unified calc/verification scripts permitted via `write`.
   - Structured data: process STRICTLY via ad-hoc Node/Python scripts passed via stdin or temp files; NEVER dump raw data into context.
-  - Shell execution: system binaries, external CLIs, builds, package managers, test runners — STRICTLY via `bash`. Prioritize chaining local non-blocking operations via `&&` (`git add ... && git commit ... && npm test`) to eliminate round-trip latency; keep network- or credential-bound commands (`git push`, `npm publish`, remote fetch) separate to prevent Windows process handle hanging and timeouts.
+  - Shell execution: system binaries, external CLIs, builds, package managers, test runners — STRICTLY via `bash`. Prioritize chaining local non-blocking operations via `&&` (`git add ... && git commit ... && npm test`) to eliminate round-trip latency; keep network- or credential-bound commands (`npm publish`, remote fetch) separate to prevent Windows process handle hanging and timeouts.
 - Reporting: diffs and evidence first; zero filler. Routine status ≤ 300 Chinese characters. Answer/explain/review/diagnose/plan: no length cap. Compact locators, lists, and deltas only.
 
 ## Verification

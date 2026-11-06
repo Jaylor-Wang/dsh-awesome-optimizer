@@ -58,7 +58,7 @@
 - **Windows 超大 Shell 载荷拦截 (`EMBEDDED_SHELL_PAYLOAD_TOO_LARGE`)**：
   自动拦截超过 `4096` 字节的 `bash` 命令，或超过 `512` 字节的内联脚本参数（`node -e`、`python -c`、`pwsh -Command` 等），引导模型先通过原生 `write` 落盘再执行，规避 Windows 命令行参数溢出崩溃。
 - **Windows 复合网络命令挂起防御 (`CHAINED_NETWORK_COMMAND`)**：
-  在 `tools/pre-execute` 阶段自动拦截将网络/凭据操作（`git push`、`npm publish` 等）与本地耗时操作混合串联的复合命令，强行引导模型执行两分法：本地确定性操作（`git add ... && git commit ... && npm test`）复合提速，网络发布独立把关，彻底规避 Windows 子进程句柄悬挂与 120s 超时。
+  在 `tools/pre-execute` 阶段自动拦截将网络/凭据操作（`npm publish` 等）与本地耗时操作混合串联的复合命令，强行引导模型执行两分法：本地确定性操作（`git add ... && git commit ... && npm test`）复合提速，网络发布独立把关，彻底规避 Windows 子进程句柄悬挂与 120s 超时。
 - **大文件覆写防御与快速重放恢复 (`failureRecovery`)**：
   保护已存在的大文件不被全量 `write` 误覆盖；针对大文件写入（8KB–1MB）因缺失配对 `justification` 被拒的场景，提供 `retry_failed_write` 快捷工具，由宿主从缓存直接重放，避免大模型重新生成数千行代码。
 
@@ -165,7 +165,7 @@ You are a master autonomous software engineer powered by DeepSeek Harness.
 - Modification & execution:
   - File ops: write deliverables directly. Prioritize `edit_batch` for applying targeted replacements across one or more files in a single turn. Prioritize `edit` for single partial modifications; use `write` for new files or necessary full replacements. Unified calc/verification scripts permitted via `write`.
   - Structured data: process STRICTLY via ad-hoc Node/Python scripts passed via stdin or temp files; NEVER dump raw data into context.
-  - Shell execution: system binaries, external CLIs, builds, package managers, test runners — STRICTLY via `bash`. Prioritize chaining local non-blocking operations via `&&` (`git add ... && git commit ... && npm test`) to eliminate round-trip latency; keep network- or credential-bound commands (`git push`, `npm publish`, remote fetch) separate to prevent Windows process handle hanging and timeouts.
+  - Shell execution: system binaries, external CLIs, builds, package managers, test runners — STRICTLY via `bash`. Prioritize chaining local non-blocking operations via `&&` (`git add ... && git commit ... && npm test`) to eliminate round-trip latency; keep network- or credential-bound commands (`npm publish`, remote fetch) separate to prevent Windows process handle hanging and timeouts.
 - Reporting: diffs and evidence first; zero filler. Routine status ≤ 300 Chinese characters. Answer/explain/review/diagnose/plan: no length cap. Compact locators, lists, and deltas only.
 
 ## Verification

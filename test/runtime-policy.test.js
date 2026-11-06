@@ -123,9 +123,9 @@ test('runtimePolicy blocks oversized shell commands and large inline scripts on 
 });
 
 test('runtimePolicy blocks chained network/credential commands while allowing local compound commands and standalone network commands', async () => {
-  const chainedNetworkCmd = 'git add . && git commit -m "feat" && git push origin main && npm test';
+  const chainedNetworkCmd = 'git add . && git commit -m "feat" && npm publish && npm test';
   const localCompoundCmd = 'git add . && git commit -m "feat" && npm test';
-  const standaloneNetworkCmd = 'git push origin main';
+  const standaloneNetworkCmd = 'npm publish';
 
   const host = await createTestRuntime({
     optimizerConfig: {

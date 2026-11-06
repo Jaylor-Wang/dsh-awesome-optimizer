@@ -357,7 +357,7 @@ export class RuntimePolicyManager {
       // Guard against dangerous network/credential command chaining on Windows
       if (this.config.disallowChainedNetworkCommands) {
         const hasCompoundOperator = /(&&|;)/.test(cmd);
-        const hasChainedNetworkAction = /(?:^|[\s;&|])(?:git\s+push|npm\s+publish|gh\s+(?:pr|issue)\s+create)\b/i.test(cmd);
+        const hasChainedNetworkAction = /(?:^|[\s;&|])(?:npm\s+publish|gh\s+(?:pr|issue)\s+create)\b/i.test(cmd);
         if (hasCompoundOperator && hasChainedNetworkAction) {
           state.shellPayloadBlocks++;
           state.policyDenials++;
@@ -366,8 +366,8 @@ export class RuntimePolicyManager {
             kind: 'deny',
             reason: JSON.stringify({
               code: 'CHAINED_NETWORK_COMMAND',
-              reason: "Chaining network/credential-bound commands ('git push', 'npm publish') with other commands causes Windows process handle hanging and 120s timeouts.",
-              nextAction: "Separate into independent steps: execute local operations ('git add ... && git commit ... && npm test') first, then run network command ('git push') standalone.",
+              reason: "Chaining network/credential-bound commands ('npm publish') with other commands causes Windows process handle hanging and 120s timeouts.",
+              nextAction: "Separate into independent steps: execute local operations first, then run network command ('npm publish') standalone.",
               retryable: false
             })
           };
