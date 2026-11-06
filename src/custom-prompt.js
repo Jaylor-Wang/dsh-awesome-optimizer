@@ -13,7 +13,7 @@ export const CustomPromptConfig = z.object({
   enabled: z.boolean().default(true),
   globalFile: z.string().default('~/.dsh/SYSTEM.md'),
   workspaceFile: z.string().default('.dsh/SYSTEM.md'),
-  placement: z.union(['suffix', 'prefix', 'replace-persona-suffix', 'section']).default('suffix'),
+  placement: z.union(['suffix', 'prefix', 'replace-persona-suffix', 'section', 'replace-all']).default('suffix'),
   sectionOrder: z.number().default(DEFAULT_SECTION_ORDER),
   sectionName: z.string().default(SECTION_NAME),
   mergeStrategy: z.union(['concat', 'workspace-override', 'global-only', 'workspace-only']).default('concat'),
@@ -249,6 +249,19 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
     const wsRoot = resolveWorkspaceRoot(ctx, context);
     const customText = manager.getEffectivePrompt(wsRoot);
     if (!customText) return assembly;
+
+    if (config.placement === 'replace-all') {
+      return {
+        ...assembly,
+        sections: [
+          {
+            name: config.sectionName,
+            text: customText,
+            interpolate: config.interpolate
+          }
+        ]
+      };
+    }
 
     if (config.placement === 'replace-persona-suffix') {
       const sections = [...assembly.sections];

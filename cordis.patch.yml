@@ -31,7 +31,12 @@
           enabled: true
           globalFile: "~/.dsh/SYSTEM.md"
           workspaceFile: ".dsh/SYSTEM.md"
-          placement: "suffix"
+          # Placement modes:
+          # - "suffix": Append to end of official system prompt (Order 10300)
+          # - "replace-all": Strip ALL verbose official sections and use ONLY the refined SYSTEM.md (~80% token savings!)
+          # - "replace-persona-suffix": Replace only deployment:persona-suffix
+          # - "prefix": Prepend before official sections
+          placement: "replace-all"
           mergeStrategy: "concat"
           hotReload: true
         telemetry:

@@ -8,7 +8,7 @@ export declare const SECTION_NAME: 'optimizer:custom-prompt';
 export declare const DEFAULT_SECTION_ORDER = 10300;
 
 export type MergeStrategy = 'concat' | 'workspace-override' | 'global-only' | 'workspace-only';
-export type PlacementMode = 'suffix' | 'prefix' | 'replace-persona-suffix' | 'section';
+export type PlacementMode = 'suffix' | 'prefix' | 'replace-persona-suffix' | 'section' | 'replace-all';
 
 export interface CustomPromptOptions {
   enabled?: boolean;

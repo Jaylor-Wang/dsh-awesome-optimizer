@@ -137,6 +137,37 @@ test('customPrompt supports replace-persona-suffix placement mode', async () => 
   }
 });
 
+test('customPrompt supports replace-all placement mode to prune official verbose sections', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-custom-replace-all-test-'));
+  const globalFile = path.join(tempDir, 'SYSTEM.md');
+  fs.writeFileSync(globalFile, 'STANDALONE_REFINED_PROMPT', 'utf8');
+
+  const host = await createTestRuntime({
+    optimizerConfig: {
+      customPrompt: {
+        enabled: true,
+        globalFile,
+        placement: 'replace-all',
+        hotReload: false
+      }
+    },
+    script: [
+      [{ type: 'text', text: 'Done.' }]
+    ]
+  });
+
+  try {
+    await host.run('Check replace-all');
+    const systemPromptText = extractPromptText(host.requests[0]);
+
+    assert.match(systemPromptText, /STANDALONE_REFINED_PROMPT/);
+    assert.doesNotMatch(systemPromptText, /Default Persona/);
+  } finally {
+    await host.dispose();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('customPrompt hot-reloads file changes reactively without restart', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-custom-hotreload-test-'));
   const globalFile = path.join(tempDir, 'SYSTEM.md');

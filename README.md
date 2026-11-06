@@ -3,7 +3,7 @@
 > Non-invasive runtime policy, PTC-backed composite batch tools, soft convergence guidance, and A/B turn telemetry plugin for the official DeepSeek Harness (`@deepseek-ai/dsh-agent-loop`).
 
 [![Release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-plugin-agent-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-plugin-agent-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen.svg)](test)
+[![Tests](https://img.shields.io/badge/tests-22%20passed-brightgreen.svg)](test)
 [![English](https://img.shields.io/badge/lang-English-blue.svg)](README.md)
 [![简体中文](https://img.shields.io/badge/lang-简体中文-red.svg)](README.zh.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -39,7 +39,7 @@
 8. **Reactive File-Driven System Prompt Customization (`src/custom-prompt.js`)**:
    - **Dual-Layer `SYSTEM.md` Convention**: Automatically discovers global `~/.dsh/SYSTEM.md` (or `$DSH_HOME/SYSTEM.md`) and project-level workspace `.dsh/SYSTEM.md` (or `SYSTEM.md`), cleanly separating developer system defaults from repo-specific instructions and distinct from role-oriented `AGENTS.md`.
    - **Millisecond Hot-Reload**: Powered by debounced `fs.watch` watchers, changes saved in your editor take effect immediately on subsequent turns without restarting the DSH server.
-   - **Cascading & Placement Modes**: Configurable merge strategies (`concat` cascading, `workspace-override`, `global-only`, `workspace-only`) and placement targets (`suffix` at order `10300`, `replace-persona-suffix`, or `prefix`).
+   - **Cascading & Placement Modes**: Configurable merge strategies (`concat` cascading, `workspace-override`, `global-only`, `workspace-only`) and placement targets (`replace-all` to strip official verbose prompts for ~80% token savings, `suffix` at order `10300`, `replace-persona-suffix`, or `prefix`).
 
 ---
 
@@ -77,7 +77,7 @@
           enabled: true
           globalFile: "~/.dsh/SYSTEM.md"
           workspaceFile: ".dsh/SYSTEM.md"
-          placement: "suffix"
+          placement: "replace-all"
           mergeStrategy: "concat"
           hotReload: true
         telemetry:
