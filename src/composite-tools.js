@@ -237,7 +237,7 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
               properties: {
                 file_path: {
                   type: 'string',
-                  description: 'Path to edit, resolved by the filesystem backend.'
+                  description: 'Path to edit, resolved by the filesystem backend. Provide `file_path` before `old_string` and `new_string` in the arguments.'
                 },
                 old_string: {
                   type: 'string',
