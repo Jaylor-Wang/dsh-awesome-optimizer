@@ -347,7 +347,7 @@ export class RuntimePolicyManager {
           kind: 'deny',
           reason: JSON.stringify({
             code: 'EMBEDDED_SHELL_PAYLOAD_TOO_LARGE',
-            reason: `Large script or deliverable embedded in shell argument (${cmdBytes} bytes). Never embed complete scripts or files in shell commands.`,
+            reason: `Large script or deliverable embedded in shell argument (${cmdBytes} bytes). NEVER embed complete scripts or files in shell commands.`,
             nextAction: "Write a reusable script or deliverable using native 'write' first, then execute it by file path.",
             retryable: false
           })

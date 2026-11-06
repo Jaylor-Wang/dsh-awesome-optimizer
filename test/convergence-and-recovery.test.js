@@ -38,7 +38,7 @@ test('convergence guidance injects one-time soft step budget notice without hard
       e => e.type === 'user/message' && e.data.source?.kind === CONVERGENCE_SOURCE
     );
     assert.equal(reminders.length, 2);
-    assert.match(reminders[0].data.content[0].text, /Accelerate execution/);
+    assert.match(reminders[0].data.content[0].text, /Accelerate execution: batch remaining actions and conclude if criteria are met; NEVER omit verification\./);
 
     const endEvent = host.events.filter(e => e.type === 'turn/end').at(-1);
     assert.equal(endEvent?.data.reason.kind, 'completed');
@@ -91,7 +91,7 @@ test('convergence guidance injects periodic micro-directive, caps at maxReminder
     // Injected exactly twice (capped at maxRemindersPerTurn = 2)
     assert.equal(reminders.length, 2);
     for (const r of reminders) {
-      assert.match(r.data.content[0].text, /Accelerate execution/);
+      assert.match(r.data.content[0].text, /Accelerate execution: batch remaining actions and conclude if criteria are met; NEVER omit verification\./);
     }
 
     const summary = host.agent.session

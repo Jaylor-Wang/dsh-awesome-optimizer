@@ -9,13 +9,13 @@ export const GUIDANCE = [
   "Work toward the user's completion criteria with as few model round trips as practical.",
   'Batch independent reads, searches, and checks in a single response when their inputs are known (or use read_batch for multi-file reads); preserve dependencies and exclusive tool barriers.',
   'Command chaining: Prioritize chaining local non-blocking operations via && (git add ... && git commit ... && npm test) to eliminate round-trip latency. Keep network- or credential-bound commands (npm publish, remote fetch) separate to prevent Windows process handle hanging and timeouts.',
-  'Before emitting a large payload, write deliverables or reusable scripts to disk using native write and execute by file path. Never embed complete files or large scripts in shell arguments (node -e, python -c, pwsh -Command).',
+  'Before emitting a large payload, produce deliverables or reusable scripts to disk using native write and execute by file path. NEVER embed complete files or large scripts in shell arguments (node -e, python -c, pwsh -Command).',
   'For localized revisions on existing files, reuse context already in the conversation and prefer native edit (or edit_batch for multi-file/multi-location revisions) with an unambiguous match over rewriting the entire file.',
   'After receiving tool results, make the next complete useful decision without repeating equivalent searches or checks unless new evidence justifies them.',
-  'This efficiency guidance never overrides the user, correctness, permission checks, required verification, or cancellation.'
+  'This efficiency guidance NEVER overrides the user, correctness, permission checks, required verification, or cancellation.'
 ].join('\n');
 
-export const REMINDER = 'Accelerate execution: batch remaining actions and conclude if criteria are met; do not omit verification.';
+export const REMINDER = 'Accelerate execution: batch remaining actions and conclude if criteria are met; NEVER omit verification.';
 
 export const ConvergenceConfig = z.object({
   enabled: z.boolean().default(true),
