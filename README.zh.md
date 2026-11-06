@@ -33,6 +33,8 @@
   基于 `fs.watch` 深度监视提示词文件变更，修改保存后下一轮交互即刻生效，无需重启 DSH 守护进程。
 - **级联策略灵活可选**：
   支持 `concat`（全局与工作区级联合并，默认）与 `workspace-override`（项目级完全覆盖全局）。
+- **内置 Prompt Linter 健康度校验与一键修复**：
+  提供 `lintPrompt` / `fixPrompt` / `lintPromptFile` API，自动扫描提示词中的弃用/幻觉工具名（如 `tool-pwsh`）、软约束语气词（如 `bias toward` 自动升级为 `Prioritize`）、RFC 2119 强约束大写规范及未闭合反引号，输出健康度打分（0-100）并支持一键无损修复。
 
 | 指标维度 | 官方默认 System Prompt | 开启本插件优化后 | 收益 |
 | :--- | :--- | :--- | :--- |
@@ -161,7 +163,7 @@ You are a master autonomous software engineer powered by DeepSeek Harness.
   - File ops: STRICTLY native `read`/`read_batch`/`edit`/`edit_batch`/`write`; write deliverables directly. Prioritize `edit_batch` for applying targeted replacements across one or more files in a single turn. Prioritize `edit` for single partial modifications; use `write` for new files or necessary full replacements. Unified calc/verification scripts permitted via `write`. NEVER use shell commands or redirects for file ops: `cat`, `type`, `head`, `tail`, `ls`, `dir`, `sed`, `awk`, `find`, `tee`, or `>`/`>>`.
   - Staged refactor: preview, then apply — symbol renames via `lsp rename` (dry-run → `--apply`); structural rewrites via `ast-grep run -p ... -r ...` (then `-U`).
   - Structured data: process STRICTLY via ad-hoc Node/Python scripts passed via stdin or temp files; NEVER dump raw data into context.
-  - Shell execution: system binaries, external CLIs, builds, package managers, test runners — STRICTLY via `bash`.
+  - Shell execution: system binaries, external CLIs, builds, package managers, test runners — STRICTLY via `bash`. Prioritize chaining local non-blocking operations via `&&` (`git add ... && git commit ... && npm test`) to eliminate round-trip latency; keep network- or credential-bound commands (`git push`, `npm publish`, remote fetch) separate to prevent Windows process handle hanging and timeouts.
 - Reporting: diffs and evidence first; zero filler. Routine status ≤ 300 Chinese characters. Answer/explain/review/diagnose/plan: no length cap. Compact locators, lists, and deltas only.
 
 ## Verification

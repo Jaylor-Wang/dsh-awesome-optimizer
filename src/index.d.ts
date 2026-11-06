@@ -83,6 +83,15 @@ export {
   type TurnTelemetrySummary,
   type TurnComparisonDelta
 } from './telemetry.d.ts';
+export {
+  lintPrompt,
+  fixPrompt,
+  lintPromptFile,
+  RULE_IDS as PROMPT_LINT_RULES,
+  type PromptLintStats,
+  type PromptLintIssue,
+  type PromptLintResult
+} from './prompt-linter.d.ts';
 
 declare const plugin: { name: typeof name; inject: typeof inject; Config: typeof Config; apply: typeof apply };
 export default plugin;

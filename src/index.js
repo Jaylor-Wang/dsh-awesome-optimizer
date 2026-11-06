@@ -7,6 +7,8 @@ import { applyConvergence, ConvergenceConfig, SOURCE as CONVERGENCE_SOURCE, GUID
 import { applyCustomPrompt, CustomPromptConfig, CustomPromptManager, SECTION_NAME as CUSTOM_PROMPT_SECTION } from './custom-prompt.js';
 import { applyTelemetry, TelemetryConfig, AgentTelemetryManager, compareTurnSummaries } from './telemetry.js';
 
+import { lintPrompt, fixPrompt, lintPromptFile, RULE_IDS as PROMPT_LINT_RULES } from './prompt-linter.js';
+
 export const name = 'dsh-plugin-agent-optimizer';
 export const inject = ['systemPrompt', 'tools'];
 
@@ -82,6 +84,10 @@ export {
   CUSTOM_PROMPT_SECTION,
   CustomPromptManager,
   applyCustomPrompt,
+  lintPrompt,
+  fixPrompt,
+  lintPromptFile,
+  PROMPT_LINT_RULES,
   GUIDANCE,
   REMINDER
 };

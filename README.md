@@ -33,6 +33,8 @@ High-performance, non-invasive runtime policy, PTC-backed composite batch toolin
   Uses debounced `fs.watch` to detect prompt file edits and applies them reactively on the very next turn without restarting the DSH process.
 - **Flexible Cascading Strategies**:
   Supports `concat` (cascading global and workspace prompts, default) and `workspace-override` (repo prompt completely replaces global prompt).
+- **Built-in Prompt Linter & Auto-Fixer**:
+  Provides `lintPrompt` / `fixPrompt` / `lintPromptFile` APIs to automatically detect deprecated/phantom tools (e.g. `tool-pwsh`), weak modals (`bias toward` -> `Prioritize`), unclosed backticks, and enforce RFC 2119 uppercase constraint conventions with actionable health scoring (0-100) and safe automated fixes.
 
 | Dimension | Official Default System Prompt | Optimized with This Plugin | Savings |
 | :--- | :--- | :--- | :--- |
@@ -161,7 +163,7 @@ You are a master autonomous software engineer powered by DeepSeek Harness.
   - File ops: STRICTLY native `read`/`read_batch`/`edit`/`edit_batch`/`write`; write deliverables directly. Prioritize `edit_batch` for applying targeted replacements across one or more files in a single turn. Prioritize `edit` for single partial modifications; use `write` for new files or necessary full replacements. Unified calc/verification scripts permitted via `write`. NEVER use shell commands or redirects for file ops: `cat`, `type`, `head`, `tail`, `ls`, `dir`, `sed`, `awk`, `find`, `tee`, or `>`/`>>`.
   - Staged refactor: preview, then apply — symbol renames via `lsp rename` (dry-run → `--apply`); structural rewrites via `ast-grep run -p ... -r ...` (then `-U`).
   - Structured data: process STRICTLY via ad-hoc Node/Python scripts passed via stdin or temp files; NEVER dump raw data into context.
-  - Shell execution: system binaries, external CLIs, builds, package managers, test runners — STRICTLY via `bash`.
+  - Shell execution: system binaries, external CLIs, builds, package managers, test runners — STRICTLY via `bash`. Prioritize chaining local non-blocking operations via `&&` (`git add ... && git commit ... && npm test`) to eliminate round-trip latency; keep network- or credential-bound commands (`git push`, `npm publish`, remote fetch) separate to prevent Windows process handle hanging and timeouts.
 - Reporting: diffs and evidence first; zero filler. Routine status ≤ 300 Chinese characters. Answer/explain/review/diagnose/plan: no length cap. Compact locators, lists, and deltas only.
 
 ## Verification
