@@ -34,7 +34,7 @@
 - **级联策略灵活可选**：
   支持 `concat`（全局与工作区级联合并，默认）与 `workspace-override`（项目级完全覆盖全局）。
 - **内置 Prompt Linter 健康度校验与一键修复**：
-  提供 `lintPrompt` / `fixPrompt` / `lintPromptFile` API，自动扫描提示词中的弃用/幻觉工具名（如 `tool-pwsh`）、软约束语气词（如 `bias toward` 自动升级为 `Prioritize`）、RFC 2119 强约束大写规范及未闭合反引号，输出健康度打分（0-100）并支持一键无损修复。
+  提供 `lintPrompt` / `fixPrompt` / `lintPromptFile` API。**基于用户当前预设加载的插件工具做动态客观判定**，杜绝主观臆断：当工具未在预设加载时提示冗余防守，当工具已加载却声明禁用时提示配置冲突，并校验弱语气词（如 `bias toward` 自动升级为 `Prioritize`）、RFC 2119 强约束大写规范及未闭合反引号，输出健康度打分（0-100）并支持一键无损修复。
 
 | 指标维度 | 官方默认 System Prompt | 开启本插件优化后 | 收益 |
 | :--- | :--- | :--- | :--- |

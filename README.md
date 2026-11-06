@@ -34,7 +34,7 @@ High-performance, non-invasive runtime policy, PTC-backed composite batch toolin
 - **Flexible Cascading Strategies**:
   Supports `concat` (cascading global and workspace prompts, default) and `workspace-override` (repo prompt completely replaces global prompt).
 - **Built-in Prompt Linter & Auto-Fixer**:
-  Provides `lintPrompt` / `fixPrompt` / `lintPromptFile` APIs to automatically detect deprecated/phantom tools (e.g. `tool-pwsh`), weak modals (`bias toward` -> `Prioritize`), unclosed backticks, and enforce RFC 2119 uppercase constraint conventions with actionable health scoring (0-100) and safe automated fixes.
+  Provides `lintPrompt` / `fixPrompt` / `lintPromptFile` APIs with **preset-aware dynamic tool validation**. Eliminates subjective tool assumptions by verifying tool directives directly against active plugins: flags redundant defensive clauses for unloaded tools or conflicts with actively loaded tools, checks weak modals (`bias toward` -> `Prioritize`), unclosed backticks, and enforces RFC 2119 uppercase constraints with actionable health scoring (0-100).
 
 | Dimension | Official Default System Prompt | Optimized with This Plugin | Savings |
 | :--- | :--- | :--- | :--- |

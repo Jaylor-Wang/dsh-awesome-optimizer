@@ -1,19 +1,13 @@
 import fs from 'node:fs';
 
 export const RULE_IDS = {
-  DEPRECATED_TOOLS: 'deprecated-tools',
+  TOOL_PRESET_MISMATCH: 'tool-preset-mismatch',
+  UNVERIFIED_TOOL_DISABLEMENT: 'unverified-tool-disablement',
   WEAK_MODALS: 'weak-modals',
   CONSTRAINT_CASING: 'constraint-casing',
   LEGACY_JARGON: 'legacy-jargon',
   UNCLOSED_BACKTICKS: 'unclosed-backticks'
 };
-
-const DEPRECATED_TOOLS = [
-  { pattern: /\btool-pwsh\b/gi, name: 'tool-pwsh' },
-  { pattern: /\btool-web\b/gi, name: 'tool-web' },
-  { pattern: /\bweb-search-deepseek\b/gi, name: 'web-search-deepseek' },
-  { pattern: /\bweb-fetch-http\b/gi, name: 'web-fetch-http' }
-];
 
 const WEAK_MODALS = [
   { pattern: /\b[Bb]ias(?:ed)?\s+toward\b/g, suggestion: 'Prioritize' },
@@ -37,15 +31,77 @@ const DIRECTIVE_CASING = [
 ];
 
 /**
+ * Extract active tool names from options or Cordis Context.
+ * @param {object} options
+ * @returns {Set<string>|null}
+ */
+export function resolveActiveToolNames(options = {}) {
+  if (options.activeTools) {
+    if (options.activeTools instanceof Set) return options.activeTools;
+    if (Array.isArray(options.activeTools)) return new Set(options.activeTools);
+  }
+
+  const ctx = options.ctx;
+  if (ctx?.tools) {
+    try {
+      if (typeof ctx.tools.definitions === 'function') {
+        const defs = ctx.tools.definitions(options.scope);
+        if (Array.isArray(defs)) {
+          return new Set(defs.map(d => d.name));
+        }
+      }
+    } catch (_err) {}
+  }
+
+  return null;
+}
+
+/**
+ * Extract candidate tool names mentioned in negative/disablement clauses.
+ * Matches patterns like: `(`tool-pwsh` disabled)`, `harness `web-search-deepseek` ... disabled`
+ * @param {string} line
+ * @returns {string[]}
+ */
+function extractDisabledToolReferences(line = '') {
+  const tools = [];
+  // Pattern 1: (`tool-xyz` disabled) or (`tool-xyz` is disabled)
+  const p1 = /\(`?([a-zA-Z0-9_-]+)`?\s+(?:is\s+)?disabled\)/gi;
+  let m1;
+  while ((m1 = p1.exec(line)) !== null) {
+    tools.push(m1[1]);
+  }
+
+  // Pattern 2: harness `tool-a`, `tool-b` are disabled
+  const p2 = /(?:harness\s+)?((?:`[a-zA-Z0-9_-]+`(?:\s*,\s*|\s+and\s+)?)+)\s+(?:is|are)\s+disabled/gi;
+  let m2;
+  while ((m2 = p2.exec(line)) !== null) {
+    const list = m2[1].match(/`([a-zA-Z0-9_-]+)`/g);
+    if (list) {
+      for (const item of list) {
+        tools.push(item.replace(/`/g, ''));
+      }
+    }
+  }
+
+  return Array.from(new Set(tools));
+}
+
+/**
  * Scan prompt content and report actionable lint issues, stats, and a health score.
+ * Evaluates tool references dynamically against currently loaded preset/plugins when provided.
  * @param {string} content
+ * @param {object} [options]
+ * @param {string[]|Set<string>} [options.activeTools] - Set of active tool names in the profile/preset
+ * @param {object} [options.ctx] - Cordis Context with tools service
+ * @param {object} [options.scope] - Agent scope key
  * @returns {object} Lint result with score, stats, issues, and fixable status.
  */
-export function lintPrompt(content = '') {
+export function lintPrompt(content = '', options = {}) {
   if (typeof content !== 'string') {
     content = String(content || '');
   }
 
+  const activeTools = resolveActiveToolNames(options);
   const lines = content.split('\n');
   const issues = [];
   let inCodeBlock = false;
@@ -60,17 +116,40 @@ export function lintPrompt(content = '') {
     }
     if (inCodeBlock) continue;
 
-    // 1. Deprecated Tools Check
-    for (const dt of DEPRECATED_TOOLS) {
-      if (dt.pattern.test(line)) {
+    // 1. Tool References & Disablement Analysis (Dynamic ground-truth check)
+    const disabledTools = extractDisabledToolReferences(line);
+    for (const toolName of disabledTools) {
+      if (activeTools !== null) {
+        // Preset ground truth is available
+        const isLoaded = activeTools.has(toolName);
+        if (isLoaded) {
+          // Tool IS loaded in current preset, but prompt claims it is disabled
+          issues.push({
+            ruleId: RULE_IDS.TOOL_PRESET_MISMATCH,
+            severity: 'warning',
+            line: lineNum,
+            message: `Tool "${toolName}" is actively loaded in the current runtime/preset. Stating it is disabled in the prompt conflicts with registered capabilities; disable it in profile cordis.patch.yml instead.`,
+            fixable: false
+          });
+        } else {
+          // Tool is NOT loaded in preset; prompt is defensively explaining absence of non-existent tool
+          issues.push({
+            ruleId: RULE_IDS.TOOL_PRESET_MISMATCH,
+            severity: 'warning',
+            line: lineNum,
+            message: `Tool "${toolName}" is not registered in the current preset/plugins. Describing its absence in the prompt adds redundant attention noise for a non-existent tool.`,
+            fixable: true
+          });
+        }
+      } else {
+        // Offline check without active tools context: do not make subjective assumptions
         issues.push({
-          ruleId: RULE_IDS.DEPRECATED_TOOLS,
-          severity: 'warning',
+          ruleId: RULE_IDS.UNVERIFIED_TOOL_DISABLEMENT,
+          severity: 'info',
           line: lineNum,
-          message: `Detected deprecated or non-existent tool "${dt.name}". Prune to avoid model hallucination and attention noise.`,
-          fixable: true
+          message: `Tool disablement clause detected for "${toolName}". Verify whether this tool is loaded in your active profile preset.`,
+          fixable: false
         });
-        dt.pattern.lastIndex = 0;
       }
     }
 
@@ -135,11 +214,14 @@ export function lintPrompt(content = '') {
   const estimatedTokens = Math.ceil(chars / 3.8);
 
   // Calculate score (0 - 100)
+  // Only errors and warnings deduct points; informative unverified notes do not penalize
   let deductions = 0;
   for (const issue of issues) {
     if (issue.severity === 'error') deductions += 25;
     else if (issue.severity === 'warning') deductions += 10;
-    else if (issue.severity === 'info') deductions += 4;
+    else if (issue.severity === 'info' && issue.ruleId !== RULE_IDS.UNVERIFIED_TOOL_DISABLEMENT) {
+      deductions += 4;
+    }
   }
 
   const score = Math.max(0, Math.min(100, 100 - deductions));
@@ -158,10 +240,12 @@ export function lintPrompt(content = '') {
 
 /**
  * Automatically apply safe, high-signal fixes to prompt text.
+ * When activeTools is supplied, safely cleans up absent tool disablement clauses.
  * @param {string} content
+ * @param {object} [options]
  * @returns {string} Cleaned and optimized prompt text.
  */
-export function fixPrompt(content = '') {
+export function fixPrompt(content = '', options = {}) {
   if (typeof content !== 'string') return '';
 
   let fixed = content;
@@ -174,12 +258,17 @@ export function fixPrompt(content = '') {
   fixed = fixed.replace(/\bBias toward\b/g, 'Prioritize');
   fixed = fixed.replace(/\bbias toward\b/g, 'prioritize');
 
-  // 3. Clean up deprecated tool phrasing
-  fixed = fixed.replace(/-\s*Shell:\s*harness\s*`bash`\s*only\s*\(`tool-pwsh`\s*disabled\)\.\s*Launch\s*`pwsh\.exe`\s*from\s*`bash`\s*when\s*needed\./gi,
-    '- Shell: ONLY `bash`. Launch `pwsh.exe` from `bash` when needed.');
+  // 3. Clean up tool phrasing if tools are not loaded in preset (or by default cleanup)
+  const activeTools = resolveActiveToolNames(options);
+  if (!activeTools || !activeTools.has('tool-pwsh')) {
+    fixed = fixed.replace(/-\s*Shell:\s*harness\s*`bash`\s*only\s*\(`tool-pwsh`\s*disabled\)\.\s*Launch\s*`pwsh\.exe`\s*from\s*`bash`\s*when\s*needed\./gi,
+      '- Shell: ONLY `bash`. Launch `pwsh.exe` from `bash` when needed.');
+  }
 
-  fixed = fixed.replace(/-\s*Web:\s*harness\s*`web-search-deepseek`,\s*`web-fetch-http`,\s*and\s*`tool-web`\s*are\s*disabled\.\s*Research\/fetch\s*STRICTLY\s*via\s*skills\s*\(([^)]+)\)\s*or\s*bash\s*CLIs\./gi,
-    '- Web: Research/fetch STRICTLY via skills ($1) or bash CLIs.');
+  if (!activeTools || (!activeTools.has('web-search-deepseek') && !activeTools.has('tool-web'))) {
+    fixed = fixed.replace(/-\s*Web:\s*harness\s*`web-search-deepseek`,\s*`web-fetch-http`,\s*and\s*`tool-web`\s*are\s*disabled\.\s*Research\/fetch\s*STRICTLY\s*via\s*skills\s*\(([^)]+)\)\s*or\s*bash\s*CLIs\./gi,
+      '- Web: Research/fetch STRICTLY via skills ($1) or bash CLIs.');
+  }
 
   // 4. Uppercase directive constraints
   for (const dc of DIRECTIVE_CASING) {
@@ -192,15 +281,16 @@ export function fixPrompt(content = '') {
 /**
  * Read and lint a prompt file from disk.
  * @param {string} filePath
+ * @param {object} [options]
  * @returns {object|null}
  */
-export function lintPromptFile(filePath) {
+export function lintPromptFile(filePath, options = {}) {
   if (!filePath || !fs.existsSync(filePath)) return null;
   try {
     const content = fs.readFileSync(filePath, 'utf8');
     return {
       filePath,
-      ...lintPrompt(content)
+      ...lintPrompt(content, options)
     };
   } catch (err) {
     return {

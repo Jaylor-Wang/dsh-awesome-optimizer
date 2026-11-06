@@ -1,3 +1,11 @@
+import type { Context } from '@deepseek-ai/cordis';
+
+export interface PromptLintOptions {
+  activeTools?: string[] | Set<string>;
+  ctx?: Context;
+  scope?: unknown;
+}
+
 export interface PromptLintStats {
   lines: number;
   chars: number;
@@ -21,13 +29,15 @@ export interface PromptLintResult {
 }
 
 export declare const RULE_IDS: {
-  DEPRECATED_TOOLS: string;
+  TOOL_PRESET_MISMATCH: string;
+  UNVERIFIED_TOOL_DISABLEMENT: string;
   WEAK_MODALS: string;
   CONSTRAINT_CASING: string;
   LEGACY_JARGON: string;
   UNCLOSED_BACKTICKS: string;
 };
 
-export declare function lintPrompt(content?: string): PromptLintResult;
-export declare function fixPrompt(content?: string): string;
-export declare function lintPromptFile(filePath: string): PromptLintResult | null;
+export declare function resolveActiveToolNames(options?: PromptLintOptions): Set<string> | null;
+export declare function lintPrompt(content?: string, options?: PromptLintOptions): PromptLintResult;
+export declare function fixPrompt(content?: string, options?: PromptLintOptions): string;
+export declare function lintPromptFile(filePath: string, options?: PromptLintOptions): PromptLintResult | null;
