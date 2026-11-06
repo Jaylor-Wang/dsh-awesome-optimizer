@@ -13,7 +13,7 @@ export const CustomPromptConfig = z.object({
   enabled: z.boolean().default(true),
   globalFile: z.string().default('~/.dsh/SYSTEM.md'),
   workspaceFile: z.string().default('.dsh/SYSTEM.md'),
-  placement: z.union(['suffix', 'prefix', 'replace-persona-suffix', 'section', 'replace-all']).default('suffix'),
+  placement: z.union(['replace-all', 'suffix']).default('replace-all'),
   sectionOrder: z.number().default(DEFAULT_SECTION_ORDER),
   sectionName: z.string().default(SECTION_NAME),
   mergeStrategy: z.union(['concat', 'workspace-override', 'global-only', 'workspace-only']).default('concat'),
@@ -251,6 +251,10 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
     if (!customText) return assembly;
 
     if (config.placement === 'replace-all') {
+      // Retain optimizer's own sections (e.g. convergence guidance) while stripping all official verbose sections
+      const optimizerSections = assembly.sections.filter(
+        s => typeof s.name === 'string' && s.name.startsWith('optimizer:') && s.name !== config.sectionName
+      );
       return {
         ...assembly,
         sections: [
@@ -258,39 +262,13 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
             name: config.sectionName,
             text: customText,
             interpolate: config.interpolate
-          }
+          },
+          ...optimizerSections
         ]
       };
     }
 
-    if (config.placement === 'replace-persona-suffix') {
-      const sections = [...assembly.sections];
-      const idx = sections.findIndex(s => s.name === 'deployment:persona-suffix');
-      if (idx >= 0) {
-        sections[idx] = { ...sections[idx], text: customText };
-      } else {
-        sections.push({
-          name: config.sectionName,
-          text: customText,
-          interpolate: config.interpolate
-        });
-      }
-      return { ...assembly, sections };
-    }
-
-    if (config.placement === 'prefix') {
-      const sections = [
-        {
-          name: config.sectionName,
-          text: customText,
-          interpolate: config.interpolate
-        },
-        ...assembly.sections
-      ];
-      return { ...assembly, sections };
-    }
-
-    // For suffix/section: if ctx.systemPrompt.section was not available, ensure it gets injected
+    // For suffix: if ctx.systemPrompt.section was not available, ensure it gets injected
     if (!ctx.systemPrompt?.section) {
       const sections = [...assembly.sections];
       const existingIdx = sections.findIndex(s => s.name === config.sectionName);

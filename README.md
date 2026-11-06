@@ -39,7 +39,7 @@
 8. **Reactive File-Driven System Prompt Customization (`src/custom-prompt.js`)**:
    - **Dual-Layer `SYSTEM.md` Convention**: Automatically discovers global `~/.dsh/SYSTEM.md` (or `$DSH_HOME/SYSTEM.md`) and project-level workspace `.dsh/SYSTEM.md` (or `SYSTEM.md`), cleanly separating developer system defaults from repo-specific instructions and distinct from role-oriented `AGENTS.md`.
    - **Millisecond Hot-Reload**: Powered by debounced `fs.watch` watchers, changes saved in your editor take effect immediately on subsequent turns without restarting the DSH server.
-   - **Cascading & Placement Modes**: Configurable merge strategies (`concat` cascading, `workspace-override`, `global-only`, `workspace-only`) and placement targets (`replace-all` to strip official verbose prompts for ~80% token savings, `suffix` at order `10300`, `replace-persona-suffix`, or `prefix`).
+   - **Cascading & Placement Modes**: Configurable merge strategies (`concat` cascading, `workspace-override`, `global-only`, `workspace-only`) and placement targets (`replace-all` by default to strip official verbose prompts for ~80% token savings, or `suffix` at order `10300`).
 
 ---
 

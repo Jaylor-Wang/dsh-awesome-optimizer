@@ -38,7 +38,7 @@
 8. **文件驱动响应式系统提示词定制 (`src/custom-prompt.js`)**：
    - **双层 `SYSTEM.md` 规约**：自动寻找全局配置 `~/.dsh/SYSTEM.md`（或 `$DSH_HOME/SYSTEM.md`）与项目级工作区配置 `.dsh/SYSTEM.md`（或 `SYSTEM.md`），与面向角色的 `AGENTS.md` 权责清晰分离。
    - **毫秒级热加载（Hot-Reload）**：基于 `fs.watch` + 防抖重载引擎，直接修改 Markdown 文件保存即刻生效，无需重启 DSH 服务。
-   - **智能级联与挂载**：支持 `concat`（全局+工作区级联合并）与 `workspace-override`（项目级完全覆盖全局）等合并策略；支持 `replace-all`（彻底剥离官方冗长提示词，实现 ~80% token 缩减）、`suffix`（默认尾部分段，具备最高约束力）、`replace-persona-suffix`（替换官方 Persona 后缀）与 `prefix` 插入模式。
+   - **智能级联与挂载**：支持 `concat`（全局+工作区级联合并）与 `workspace-override`（项目级完全覆盖全局）等合并策略；支持 `replace-all`（默认模式，彻底剥离官方冗长提示词，实现 ~80% token 缩减）与 `suffix`（尾部追加生效）。
 
 ---
 

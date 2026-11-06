@@ -107,36 +107,6 @@ test('customPrompt supports workspace-override merge strategy', async () => {
   }
 });
 
-test('customPrompt supports replace-persona-suffix placement mode', async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-custom-replace-test-'));
-  const globalFile = path.join(tempDir, 'SYSTEM.md');
-  fs.writeFileSync(globalFile, 'CUSTOM_SUFFIX_OVERWRITE', 'utf8');
-
-  const host = await createTestRuntime({
-    optimizerConfig: {
-      customPrompt: {
-        enabled: true,
-        globalFile,
-        placement: 'replace-persona-suffix',
-        hotReload: false
-      }
-    },
-    script: [
-      [{ type: 'text', text: 'Done.' }]
-    ]
-  });
-
-  try {
-    await host.run('Check replace-persona-suffix');
-    const systemPromptText = extractPromptText(host.requests[0]);
-
-    assert.match(systemPromptText, /CUSTOM_SUFFIX_OVERWRITE/);
-  } finally {
-    await host.dispose();
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
 test('customPrompt supports replace-all placement mode to prune official verbose sections', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-custom-replace-all-test-'));
   const globalFile = path.join(tempDir, 'SYSTEM.md');
