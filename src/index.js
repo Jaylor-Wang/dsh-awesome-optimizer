@@ -9,7 +9,7 @@ import { applyTelemetry, TelemetryConfig, AgentTelemetryManager, compareTurnSumm
 
 import { lintPrompt, fixPrompt, lintPromptFile, RULE_IDS as PROMPT_LINT_RULES } from './prompt-linter.js';
 
-export const name = 'dsh-plugin-agent-optimizer';
+export const name = 'dsh-awesome-optimizer';
 export const inject = ['systemPrompt', 'tools'];
 
 export const Config = z.object({

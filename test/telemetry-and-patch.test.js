@@ -108,7 +108,7 @@ test('agentTelemetry attributes interleaved streams to their session IDs', async
 test('cordis.patch.yml and source files preserve official loop ownership and never mutate agent/request', () => {
   const patchText = fs.readFileSync(path.join(root, 'cordis.patch.yml'), 'utf8');
   assert.doesNotMatch(patchText, /disabled:\s*true/);
-  assert.match(patchText, /name:\s*dsh-plugin-agent-optimizer/);
+  assert.match(patchText, /name:\s*dsh-awesome-optimizer/);
 
   const srcDir = path.join(root, 'src');
   for (const entry of fs.readdirSync(srcDir)) {

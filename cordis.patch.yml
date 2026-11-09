@@ -2,7 +2,7 @@
 # Never disables or replaces @deepseek-ai/dsh-agent-loop.
 - insert:
     - id: agent-optimizer
-      name: dsh-plugin-agent-optimizer
+      name: dsh-awesome-optimizer
       config:
         enabled: true
         runtimePolicy:

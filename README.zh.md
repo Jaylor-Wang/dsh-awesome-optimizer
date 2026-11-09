@@ -1,10 +1,10 @@
-# dsh-plugin-agent-optimizer
+# dsh-awesome-optimizer
 
 [English](README.md) | 中文
 
-[![npm version](https://img.shields.io/npm/v/dsh-plugin-agent-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-plugin-agent-optimizer)
-[![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-plugin-agent-optimizer.svg)](LICENSE)
-[![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-plugin-agent-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-plugin-agent-optimizer/releases)
+[![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
+[![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
 [![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
@@ -77,17 +77,17 @@
 
 ```bash
 # 直接安装至当前激活的 web profile
-dsh plugin --profile web add dsh-plugin-agent-optimizer
+dsh plugin --profile web add dsh-awesome-optimizer
 ```
 
 ### 2. 通过 npm / pnpm 安装
 
 ```bash
 # 使用 npm
-npm install dsh-plugin-agent-optimizer
+npm install dsh-awesome-optimizer
 
 # 使用 pnpm
-pnpm add dsh-plugin-agent-optimizer
+pnpm add dsh-awesome-optimizer
 ```
 
 ### 3. 零配置开箱即用

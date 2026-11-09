@@ -1,10 +1,10 @@
-# `dsh-plugin-agent-optimizer` Architecture Plan
+# `dsh-awesome-optimizer` Architecture Plan
 
 ## Scope & Exit Criteria
 
-- **Scope**: Build `dsh-plugin-agent-optimizer` as a standalone, non-invasive Cordis plugin around the official `@deepseek-ai/dsh-agent-loop`, separating loop lifecycle ownership from policy guards (`runtimePolicy`, `fileMutationPolicy`, `failureRecovery`), composite tooling (`read_batch`), soft convergence guidance, and objective A/B telemetry (`agentTelemetry`).
+- **Scope**: Build `dsh-awesome-optimizer` as a standalone, non-invasive Cordis plugin around the official `@deepseek-ai/dsh-agent-loop`, separating loop lifecycle ownership from policy guards (`runtimePolicy`, `fileMutationPolicy`, `failureRecovery`), composite tooling (`read_batch`), soft convergence guidance, and objective A/B telemetry (`agentTelemetry`).
 - **Exit Criteria**:
-  1. `cordis.patch.yml` mounts `dsh-plugin-agent-optimizer` purely additively without disabling `@deepseek-ai/dsh-agent-loop` or mutating `agent/request` parameters.
+  1. `cordis.patch.yml` mounts `dsh-awesome-optimizer` purely additively without disabling `@deepseek-ai/dsh-agent-loop` or mutating `agent/request` parameters.
   2. All runtime policy guards, PTC-backed `read_batch` dispatches, soft-step reminders, and telemetry aggregations pass integration tests against the official loop (`npm test` exits `0`).
   3. Public TypeScript declarations (`src/*.d.ts`, `test/types.ts`) pass strict `tsc --noEmit` verification (`npm run typecheck` exits `0`).
 

@@ -4,13 +4,13 @@ import optimizer, {
   type AgentOptimizerConfig,
   type TurnTelemetrySummary,
   compareTurnSummaries
-} from 'dsh-plugin-agent-optimizer';
-import policyPlugin, { type RuntimePolicyOptions } from 'dsh-plugin-agent-optimizer/policy';
-import mutationPlugin, { type FileMutationPolicyOptions } from 'dsh-plugin-agent-optimizer/mutation-policy';
-import recoveryPlugin, { type FailureRecoveryOptions } from 'dsh-plugin-agent-optimizer/recovery';
-import compositePlugin, { type CompositeToolsOptions } from 'dsh-plugin-agent-optimizer/composite-tools';
-import convergencePlugin, { type ConvergenceOptions } from 'dsh-plugin-agent-optimizer/convergence';
-import telemetryPlugin, { type TelemetryOptions } from 'dsh-plugin-agent-optimizer/telemetry';
+} from 'dsh-awesome-optimizer';
+import policyPlugin, { type RuntimePolicyOptions } from 'dsh-awesome-optimizer/policy';
+import mutationPlugin, { type FileMutationPolicyOptions } from 'dsh-awesome-optimizer/mutation-policy';
+import recoveryPlugin, { type FailureRecoveryOptions } from 'dsh-awesome-optimizer/recovery';
+import compositePlugin, { type CompositeToolsOptions } from 'dsh-awesome-optimizer/composite-tools';
+import convergencePlugin, { type ConvergenceOptions } from 'dsh-awesome-optimizer/convergence';
+import telemetryPlugin, { type TelemetryOptions } from 'dsh-awesome-optimizer/telemetry';
 
 const config: AgentOptimizerConfig = {
   enabled: true,

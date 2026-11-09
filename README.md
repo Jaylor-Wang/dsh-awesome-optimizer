@@ -1,10 +1,10 @@
-# dsh-plugin-agent-optimizer
+# dsh-awesome-optimizer
 
 English | [中文](README.zh.md)
 
-[![npm version](https://img.shields.io/npm/v/dsh-plugin-agent-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-plugin-agent-optimizer)
-[![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-plugin-agent-optimizer.svg)](LICENSE)
-[![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-plugin-agent-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-plugin-agent-optimizer/releases)
+[![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
+[![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
 [![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
@@ -77,17 +77,17 @@ High-performance, non-invasive runtime policy, PTC-backed composite batch toolin
 
 ```bash
 # Add directly to the active web profile
-dsh plugin --profile web add dsh-plugin-agent-optimizer
+dsh plugin --profile web add dsh-awesome-optimizer
 ```
 
 ### 2. Via npm / pnpm
 
 ```bash
 # Using npm
-npm install dsh-plugin-agent-optimizer
+npm install dsh-awesome-optimizer
 
 # Using pnpm
-pnpm add dsh-plugin-agent-optimizer
+pnpm add dsh-awesome-optimizer
 ```
 
 ### 3. Zero-Config Out of the Box

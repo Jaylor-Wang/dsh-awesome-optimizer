@@ -79,7 +79,7 @@ class ScriptedAdapter extends LlmAdapter {
 }
 
 /**
- * Mount the unchanged official @deepseek-ai/dsh-agent-loop alongside dsh-plugin-agent-optimizer.
+ * Mount the unchanged official @deepseek-ai/dsh-agent-loop alongside dsh-awesome-optimizer.
  */
 export async function createTestRuntime({
   optimizerEnabled = true,
