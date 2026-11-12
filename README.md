@@ -5,22 +5,23 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-31%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-56%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
-High-performance runtime policy guards, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
+High-performance runtime policy guards, persistent Python & Node evaluation daemons, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
 
-## Highlights in v1.8.0
+## Highlights in v2.0.0
 
-- **Host Requirement Relaxation (`未声明宿主要求`)**: Removed `engines.dsh` constraint and migrated all `@deepseek-ai/*` peer dependencies to `devDependencies` (aligned with `dsh-tool-antigravity`), eliminating artificial version intersection tags (`DSH >=0.2.2-rc.1 ∩ *`) in DSH / Cordis plugin marketplace and enabling seamless installation across any DSH runtime.
-- **Windows IPC Deadlock Elimination in Test Runner**: Reconfigured test script with `--test-concurrency=1 --test-timeout=10000`, switching `node:test` runner from parallel multi-worker fork races to deterministic linear single-channel execution, completely eliminating Windows stdio buffer lockups and EOF hang risks.
-- **Heavy Task Chain Isolation Policy (`CHAINED_HEAVY_COMMAND`)**: Proactively intercepts heavy execution and publishing commands (`npm test`, `npm run build`, `vitest`, `npm publish`) in compound shell chains (`&&`, `;`) to prevent Windows console pipe deadlocks, while allowing seamless Git pipeline chaining (`git add ... && git commit ... && git push`).
-- **Normative Ad-Hoc Script Disk Writing Enforcement**: Elevated ad-hoc script and IK/mathematical calculation guidelines to strict RFC 2119 `MUST` (`MUST write ad-hoc Node/Python scripts to disk via native write first`), eliminating friction with inline `python -c` or `node -e` shell payload overflow.
-- **Playwright CLI Contract & Parameter Hardening**: Hardened selector target semantics (`screenshot takes selector target ONLY; auto-saved without output filename`), coupled with absolute bans on exploratory `--help` / `--version` probing.
-- **Prompt Signal-to-Noise Refinement**: Pruned conflicting `produce deliverables directly` clauses, streamlined `Windows arguments & paths` to focus 100% on quoting/escaping, and eliminated redundant artifact cleanup instructions.
-- **Ecosystem Description & Marketplace Alignment**: Harmonized GitHub About and documentation with official DSH marketplace card semantics, featuring standardized `SYSTEM.md replacement mode`.
+- **Persistent Python & Node Evaluation Daemons (`eval_python` / `eval_node`)**:
+  Zero-dependency stateful execution kernels over line-delimited stdio JSON frames. Retains global scopes, functions, imports, and variables across turns (with Node top-level `await`). Slashes repetitive calculation latency from 37ms to **0.65ms (98.3% speedup)**, eliminating temporary file pollution.
+- **Watchdog Timeout & Self-Healing Auto-Restart**:
+  Built-in execution watchdog forces termination of infinite loops (`while True:`) or blocked input across platforms without freezing the host process, automatically spinning up fresh instances for seamless queued recovery.
+- **Anti-Dumping Output Guard**:
+  Enforces configurable payload truncation (default 8KB) with disk-redirect guidance, directly reinforcing the `NEVER dump raw data into context` directive.
+- **Evaluation vs Engineering Code Separation**:
+  Formalizes prompt directives ensuring intermediate calculations leverage persistent in-memory kernels while deliverable production files are committed to disk via native filesystem operations.
 
 ---
 

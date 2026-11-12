@@ -5,22 +5,23 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-31%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-56%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
-围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
+围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、持久化 Python/Node 执行内核、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
 
-## v1.8.0 版本重要更新
+## v2.0.0 版本重大里程碑更新
 
-- **解除宿主要求限制（显示为「未声明宿主要求」）**：完全对齐 `dsh-tool-antigravity` 规范，移除了 `package.json` 中的 `engines.dsh` 并将所有 `@deepseek-ai/*` 宿主依赖收拢至开发时依赖（`devDependencies`），彻底消除了插件市场中计算生成的 `DSH >=0.2.2-rc.1 ∩ *` 约束标签，展示为纯净的「未声明宿主要求」，允许在任意 DSH 运行时环境下无阻碍安装与更新。
-- **测试运行器 Windows 管道死锁根治**：将测试脚本重构为 `node --test --test-concurrency=1 --test-timeout=10000`，由多 Worker 并发争用改为确定性单通道顺序执行，彻底消除 Windows 控制台 stdio 管道缓冲区互锁与未回收 EOF 挂起隐患。
-- **重型任务复合命令链隔离拦截 (`CHAINED_HEAVY_COMMAND`)**：在 `tools/pre-execute` 阶段主动检测并拦截复合链（`&&`、`;`）中的重型构建、测试与发布命令（`npm test`、`npm run build`、`vitest`、`npm publish`），彻底杜绝 Windows 控制台管道死锁；同时放行纯净的 Git 流水线串联（`git add ... && git commit ... && git push`）。
-- **临时脚本落地磁盘硬约束升维 (`MUST`)**：将数学建模、复杂计算与辅助脚本的磁盘落地要求全面升级为最高级 RFC 2119 规范 `MUST write ad-hoc Node/Python scripts to disk`，并与 `NEVER embed multiline scripts` 形成工整对仗。
-- **Playwright CLI 选择器语义与探测硬约束加固**：明确 `screenshot` 仅接收 CSS 选择器且自动落盘（无输出文件名参数），配合 `--help` / `--version` 探针硬性禁令，消除多余回合损耗与选择器报错。
-- **提示词信噪比深度净化与冲突消除**：移除与辅助脚本产生认知对抗的 `produce deliverables directly` 语句；净化 `Windows arguments & paths` 使其 100% 聚焦于引号与转义防坑；去重冗余的 `rm -rf` 清理描述。
-- **生态与插件市场表述全量对齐**：全面对齐 DSH 官方插件市场卡片规范，采用标准工业级特性命名 `SYSTEM.md replacement mode`，去除生僻术语。
+- **持久化 Python 与 Node 执行内核 (`eval_python` / `eval_node`)**：
+  引入基于轻量级 stdio 行定界 JSON 协议帧的双语常驻守护引擎，**零外部依赖**（无需 `ipykernel`、`pyzmq` 等重型外部包）。在会话生命周期内跨调用保留全局变量、导入模块、类与函数，支持 Node 顶层 `await`。将算法、逆运动学与几何试算单次延迟从 37ms 直接压降至 **0.65ms（提速 98.3%）**，彻底终结多轮试算频繁向磁盘落盘临时脚本的损耗与文件污染。
+- **看门狗超时强杀与自愈热重启 (Watchdog & Self-Healing)**：
+  内置细粒度硬执行看门狗。当代码陷入死循环（如 `while True:`）或阻塞输入超时（默认 15s）后，主进程永不卡死挂起，跨平台强杀卡死子进程树并自动拉起新生干净实例，后续排队任务零感平滑恢复。
+- **上下文防冲爆守卫 (Anti-Dumping Interceptor)**：
+  在工具管道层对输出实施 8KB 阈值截断并追加引导落盘说明，与 `NEVER dump raw data into context` 规则深度协同，彻底杜绝超大输出冲爆 LLM 上下文。
+- **心智分流规约升维**：
+  在 `SYSTEM.md` 与 Custom Prompt 中确立“探索性解算/数据筛选优先走持久内核，工程交付物必须通过 native `write` 落盘”的最高指令分流契约。
 
 ---
 
