@@ -12,7 +12,7 @@ High-performance runtime policy guards, PTC-backed composite batch tooling, stan
 
 ---
 
-## Highlights in v1.8.1
+## Highlights in v1.8.0
 
 - **Host Requirement Relaxation (`未声明宿主要求`)**: Removed `engines.dsh` constraint and migrated all `@deepseek-ai/*` peer dependencies to `devDependencies` (aligned with `dsh-tool-antigravity`), eliminating artificial version intersection tags (`DSH >=0.2.2-rc.1 ∩ *`) in DSH / Cordis plugin marketplace and enabling seamless installation across any DSH runtime.
 - **Heavy Task Chain Isolation Policy (`CHAINED_HEAVY_COMMAND`)**: Proactively intercepts heavy execution and publishing commands (`npm test`, `npm run build`, `vitest`, `npm publish`) in compound shell chains (`&&`, `;`) to prevent Windows console pipe deadlocks, while allowing seamless Git pipeline chaining (`git add ... && git commit ... && git push`).
