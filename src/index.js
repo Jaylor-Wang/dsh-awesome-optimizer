@@ -3,6 +3,7 @@ import { applyRuntimePolicy, RuntimePolicyConfig, RuntimePolicyManager, POLICY_S
 import { applyFileMutationPolicy, FileMutationPolicyConfig, FileMutationPolicyManager, MUTATION_SOURCE } from './file-mutation-policy.js';
 import { applyFailureRecovery, RecoveryRecord, RECOVERY_SOURCE, RETRY_TOOL, PAIRING_ERROR } from './failure-recovery.js';
 import { applyCompositeTools, CompositeToolsConfig, READ_BATCH_TOOL, EDIT_BATCH_TOOL } from './composite-tools.js';
+import { applyPersistentEval, PersistentEvalConfig, EVAL_PYTHON_TOOL, EVAL_NODE_TOOL, formatEvalOutput, StdioWorkerRunner, DaemonPool } from './persistent-eval/index.js';
 import { applyConvergence, ConvergenceConfig, SOURCE as CONVERGENCE_SOURCE, GUIDANCE, REMINDER } from './convergence.js';
 import { applyCustomPrompt, CustomPromptConfig, CustomPromptManager, SECTION_NAME as CUSTOM_PROMPT_SECTION, ENVIRONMENT_FACTS_SECTION, formatEnvironmentFacts, detectPythonEnv, resetPythonCacheForTesting } from './custom-prompt.js';
 import { applyTelemetry, TelemetryConfig, AgentTelemetryManager, compareTurnSummaries } from './telemetry.js';
@@ -20,6 +21,7 @@ export const Config = z.object({
   mutationPolicy: FileMutationPolicyConfig.default({}),
   recoverFailedWrites: z.boolean().default(true),
   compositeTools: CompositeToolsConfig.default({}),
+  persistentEval: PersistentEvalConfig.default({}),
   convergence: ConvergenceConfig.default({}),
   customPrompt: CustomPromptConfig.default({}),
   telemetry: TelemetryConfig.default({})
@@ -27,7 +29,8 @@ export const Config = z.object({
 
 /**
  * Mount runtime policy guards, write recovery, composite batch tools,
- * soft convergence guidance, and objective turn telemetry around the official DSH agent loop.
+ * persistent evaluation kernels, soft convergence guidance, and objective turn telemetry
+ * around the official DSH agent loop.
  * Never disables @deepseek-ai/dsh-agent-loop or mutates agent/request parameters.
  */
 export function apply(ctx, raw = {}) {
@@ -54,6 +57,10 @@ export function apply(ctx, raw = {}) {
   const compositeService = applyCompositeTools(ctx, compositeConfig);
   if (compositeService) ctx.provide('compositeTools', compositeService);
 
+  const evalConfig = raw.persistentEval ?? config.persistentEval ?? {};
+  const evalService = applyPersistentEval(ctx, evalConfig);
+  if (evalService) ctx.provide('persistentEval', evalService);
+
   const convergenceConfig = raw.convergence ?? config.convergence ?? {};
   const convergenceService = applyConvergence(ctx, convergenceConfig);
   if (convergenceService) ctx.provide('convergenceGuidance', convergenceService);
@@ -75,6 +82,13 @@ export {
   compareTurnSummaries,
   READ_BATCH_TOOL,
   EDIT_BATCH_TOOL,
+  EVAL_PYTHON_TOOL,
+  EVAL_NODE_TOOL,
+  formatEvalOutput,
+  applyPersistentEval,
+  PersistentEvalConfig,
+  StdioWorkerRunner,
+  DaemonPool,
   RETRY_TOOL,
   PAIRING_ERROR,
   CONVERGENCE_SOURCE,

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createTestRuntime, call } from '../test/support/runtime.js';
-import { compareTurnSummaries, PAIRING_ERROR } from '../src/index.js';
+import { compareTurnSummaries, PAIRING_ERROR, StdioWorkerRunner } from '../src/index.js';
+import { PY_WORKER_SCRIPT } from '../src/persistent-eval/daemon-pool.js';
 
 // Run deterministic A/B verification scenarios over the unchanged official @deepseek-ai/dsh-agent-loop.
 async function runBatchReadScenario() {
@@ -101,13 +103,62 @@ async function runWriteRecoveryScenario() {
   }
 }
 
+async function runPersistentEvalBenchmarkScenario() {
+  const code = 'import math\nr = math.sqrt(144) + 10\nprint(f"r={r}")';
+
+  // 1. Baseline: 3 consecutive cold process launches via python
+  const coldDurations = [];
+  for (let i = 0; i < 3; i++) {
+    const t0 = performance.now();
+    const res = spawnSync('python', ['-c', code], { encoding: 'utf-8' });
+    const t1 = performance.now();
+    assert.equal(res.status, 0);
+    coldDurations.push(t1 - t0);
+  }
+  const avgColdMs = Number((coldDurations.reduce((a, b) => a + b, 0) / coldDurations.length).toFixed(2));
+
+  // 2. Candidate: persistent eval worker (hot stateful execution)
+  const runner = new StdioWorkerRunner({
+    command: 'python',
+    args: ['-u', PY_WORKER_SCRIPT]
+  });
+
+  await runner.ensureStarted();
+  const hotDurations = [];
+  try {
+    for (let i = 0; i < 3; i++) {
+      const t0 = performance.now();
+      const res = await runner.execute(code);
+      const t1 = performance.now();
+      assert.equal(res.success, true);
+      hotDurations.push(t1 - t0);
+    }
+  } finally {
+    runner.destroy();
+  }
+  const avgHotMs = Number((hotDurations.reduce((a, b) => a + b, 0) / hotDurations.length).toFixed(2));
+  const speedupRatio = Number(((avgColdMs - avgHotMs) / avgColdMs * 100).toFixed(1));
+
+  assert.ok(avgHotMs <= 15, `Expected hot execution <= 15ms but got ${avgHotMs}ms`);
+  assert.ok(speedupRatio >= 85, `Expected speedup >= 85% but got ${speedupRatio}%`);
+
+  return {
+    scenario: 'persistent-kernel-vs-cold-spawn',
+    baselineAvgColdMs: avgColdMs,
+    candidateAvgHotMs: avgHotMs,
+    speedupPercentage: `${speedupRatio}%`,
+    targetMet: true
+  };
+}
+
 const batchScenario = await runBatchReadScenario();
 const recoveryScenario = await runWriteRecoveryScenario();
+const persistentEvalScenario = await runPersistentEvalBenchmarkScenario();
 
 console.log(JSON.stringify({
   mode: 'official-loop-ab-verification',
   officialLoopReplaced: false,
   networkRequests: 0,
   note: 'Offline scripted verification proves mechanism and telemetry fidelity. Run identical live tasks to evaluate model-specific round-trip reductions.',
-  scenarios: [batchScenario, recoveryScenario]
+  scenarios: [batchScenario, recoveryScenario, persistentEvalScenario]
 }, null, 2));

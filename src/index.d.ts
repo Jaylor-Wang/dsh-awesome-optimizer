@@ -3,6 +3,7 @@ import type z from '@deepseek-ai/schemastery';
 import type { RuntimePolicyOptions } from './runtime-policy.d.ts';
 import type { FileMutationPolicyOptions } from './file-mutation-policy.d.ts';
 import type { CompositeToolsOptions } from './composite-tools.d.ts';
+import type { PersistentEvalOptions, PersistentEvalService } from './persistent-eval/index.d.ts';
 import type { ConvergenceOptions } from './convergence.d.ts';
 import type { CustomPromptOptions } from './custom-prompt.d.ts';
 import type { TelemetryOptions } from './telemetry.d.ts';
@@ -15,6 +16,7 @@ export interface AgentOptimizerConfig {
   mutationPolicy?: FileMutationPolicyOptions;
   recoverFailedWrites?: boolean;
   compositeTools?: CompositeToolsOptions;
+  persistentEval?: PersistentEvalOptions;
   convergence?: ConvergenceOptions;
   customPrompt?: CustomPromptOptions;
   telemetry?: TelemetryOptions;
@@ -88,6 +90,18 @@ export {
   type TurnTelemetrySummary,
   type TurnComparisonDelta
 } from './telemetry.d.ts';
+export {
+  EVAL_PYTHON_TOOL,
+  EVAL_NODE_TOOL,
+  formatEvalOutput,
+  applyPersistentEval,
+  PersistentEvalConfig,
+  type PersistentEvalOptions,
+  type PersistentEvalResponse,
+  type PersistentEvalService,
+  StdioWorkerRunner,
+  DaemonPool
+} from './persistent-eval/index.d.ts';
 export {
   lintPrompt,
   fixPrompt,

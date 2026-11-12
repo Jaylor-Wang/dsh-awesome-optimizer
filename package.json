@@ -26,6 +26,10 @@
       "types": "./src/composite-tools.d.ts",
       "default": "./src/composite-tools.js"
     },
+    "./persistent-eval": {
+      "types": "./src/persistent-eval/index.d.ts",
+      "default": "./src/persistent-eval/index.js"
+    },
     "./convergence": {
       "types": "./src/convergence.d.ts",
       "default": "./src/convergence.js"
