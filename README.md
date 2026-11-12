@@ -36,7 +36,7 @@ High-performance runtime policy guards, PTC-backed composite batch tooling, stan
 - **Flexible Cascading Strategies**:
   Supports `concat` (cascading global and workspace prompts, default) and `workspace-override` (repo prompt completely replaces global prompt).
 - **Built-in Prompt Linter & Auto-Fixer**:
-  Provides `lintPrompt` / `fixPrompt` / `lintPromptFile` APIs with **preset-aware dynamic tool validation**. Eliminates subjective tool assumptions by verifying tool directives directly against active plugins: flags redundant defensive clauses for unloaded tools or conflicts with actively loaded tools, checks weak modals (`bias toward` -> `Prioritize`), unclosed backticks, and enforces RFC 2119 uppercase constraints with actionable health scoring (0-100).
+  Provides `lintPrompt` / `fixPrompt` / `lintPromptFile` APIs with **preset-aware dynamic tool validation**. Eliminates subjective tool assumptions by verifying tool directives directly against active plugins: flags redundant defensive clauses for unloaded tools or conflicts with actively loaded tools, checks weak modals (e.g. upgrading soft wording to direct imperatives), unclosed backticks, and enforces RFC 2119 uppercase constraints with actionable health scoring (0-100).
 
 | Dimension | Official Default System Prompt | Optimized with This Plugin | Savings |
 | :--- | :--- | :--- | :--- |
