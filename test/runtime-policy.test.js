@@ -125,7 +125,7 @@ test('runtimePolicy blocks oversized shell commands and large inline scripts on 
 test('runtimePolicy blocks chained network/credential commands while allowing local compound commands and standalone network commands', async () => {
   const chainedNetworkCmd = 'git add . && git commit -m "feat" && npm publish && npm test';
   const chainedGitPushCmd = 'git add . && git commit -m "feat" && git push origin main';
-  const localCompoundCmd = 'git add . && git commit -m "feat" && npm test';
+  const localCompoundCmd = 'npm test && git add . && git commit -m "feat"';
   const commitWithKeywordCmd = 'git add . && git commit -m "docs: explain npm publish and git push"';
   const standaloneNetworkCmd = 'npm publish';
 
