@@ -12,12 +12,13 @@
 
 ---
 
-## v1.6.1 版本重要更新
+## v1.7.0 版本重要更新
 
+- **宿主环境事实注水全面加固与弱语气词拔除**：环境事实注水段落全面升级为 RFC 2119 绝对强约束，将模块与脚本边界严格收敛为 `NEVER require/import as node modules`，彻底封死 CommonJS 与 ESM 两种导入路径；将开局探测禁令拔除 `Avoid` 弱语气词并收敛为铁律 `NEVER run exploratory probing (pwd, ls, node -v, which)`。
 - **Python 跨平台环境智能识别与单例缓存 (`detectPythonEnv`)**：在环境事实注水时自动探测当前系统 Python 可用性（`python` / `python3` 及版本号），抹平跨平台命令分歧；采用单例懒加载缓存与超时守卫，零首字延迟开销；未装配时自动引导模型纯粹使用 Node.js，杜绝盲目生成 `.py` 脚本导致的执行失败。
 - **Playwright `file:` 协议前置硬拦截 (`PLAYWRIGHT_FILE_PROTOCOL_BLOCKED`)**：在 `tools/pre-execute` 阶段主动检测并拦截 `playwright-cli open/goto file://...`，杜绝协议阻断异常与浏览器僵尸子进程，引导模型无缝切换至本地 HTTP 环回服务。
-- **轻量宿主环境事实注水 (`injectEnvironmentFacts`)**：系统提示词组装阶段自动注入 Node.js 版本、系统架构、独立 CLI 工具边界与 Playwright 协议指引，彻底消除模型开局盲目执行探针命令（`node -v`、`which`）。
-- **CLI 独立工具与 NPM 模块边界防混淆**：在 Prompt Linter 中新增 `cli-require-confusion` 静态规则，静态拦截将外部 CLI 工具（`playwright`、`gh`、`ast-grep`）当成 Node 模块导入的认知混淆错误。
+- **轻量宿主环境事实注水 (`injectEnvironmentFacts`)**：系统提示词组装阶段自动注入 Node.js 版本、系统架构、独立 CLI 工具边界与 Playwright 协议指引，彻底消除模型开局盲目执行探针命令。
+- **CLI 独立工具与 NPM 模块边界防混淆**：在 Prompt Linter 中新增 `cli-require-confusion` 静态规则，静态拦截将外部 CLI 工具当成 Node 模块导入的认知混淆错误。
 - **复合批处理工具语义精准化与规范收敛**：`read_batch` 与 `edit_batch` 全面加固为 `MUST` 硬约束，精准规范单/多文件介词与数量阈值；精炼 Windows 参数与路径指令，去除冗余科普并强化 `NEVER raw shell arguments` 边界。
 
 ---
