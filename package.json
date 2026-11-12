@@ -1,6 +1,6 @@
 {
   "name": "dsh-awesome-optimizer",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Runtime policy guards, composite batch tooling, soft convergence guidance, reactive custom prompt engine, and A/B telemetry plugin for the official DeepSeek Harness (dsh) agent loop.",
   "type": "module",
   "main": "src/index.js",

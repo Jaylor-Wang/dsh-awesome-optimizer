@@ -12,6 +12,16 @@
 
 ---
 
+## v1.8.0 版本重要更新
+
+- **重型任务复合命令链隔离拦截 (`CHAINED_HEAVY_COMMAND`)**：在 `tools/pre-execute` 阶段主动检测并拦截复合链（`&&`、`;`）中的重型构建、测试与发布命令（`npm test`、`npm run build`、`vitest`、`npm publish`），彻底杜绝 Windows 控制台管道死锁；同时放行纯净的 Git 流水线串联（`git add ... && git commit ... && git push`）。
+- **临时脚本落地磁盘硬约束升维 (`MUST`)**：将数学建模、复杂计算与辅助脚本的磁盘落地要求全面升级为最高级 RFC 2119 规范 `MUST write ad-hoc Node/Python scripts to disk`，并与 `NEVER embed multiline scripts` 形成工整对仗。
+- **Playwright CLI 选择器语义与探测硬约束加固**：明确 `screenshot` 仅接收 CSS 选择器且自动落盘（无输出文件名参数），配合 `--help` / `--version` 探针硬性禁令，消除多余回合损耗与选择器报错。
+- **提示词信噪比深度净化与冲突消除**：移除与辅助脚本产生认知对抗的 `produce deliverables directly` 语句；净化 `Windows arguments & paths` 使其 100% 聚焦于引号与转义防坑；去重冗余的 `rm -rf` 清理描述。
+- **生态与插件市场表述全量对齐**：全面对齐 DSH 官方插件市场卡片规范，采用标准工业级特性命名 `SYSTEM.md replacement mode`，去除生僻术语。
+
+---
+
 ## v1.7.0 版本重要更新
 
 - **宿主环境事实注水全面加固与弱语气词拔除**：环境事实注水段落全面升级为 RFC 2119 绝对强约束，将模块与脚本边界严格收敛为 `NEVER require/import as node modules`，彻底封死 CommonJS 与 ESM 两种导入路径；将开局探测禁令拔除 `Avoid` 弱语气词并收敛为铁律 `NEVER run exploratory probing (pwd, ls, node -v, which)`。

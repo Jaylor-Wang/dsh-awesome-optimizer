@@ -12,6 +12,16 @@ High-performance runtime policy guards, PTC-backed composite batch tooling, stan
 
 ---
 
+## Highlights in v1.8.0
+
+- **Heavy Task Chain Isolation Policy (`CHAINED_HEAVY_COMMAND`)**: Proactively intercepts heavy execution and publishing commands (`npm test`, `npm run build`, `vitest`, `npm publish`) in compound shell chains (`&&`, `;`) to prevent Windows console pipe deadlocks, while allowing seamless Git pipeline chaining (`git add ... && git commit ... && git push`).
+- **Normative Ad-Hoc Script Disk Writing Enforcement**: Elevated ad-hoc script and IK/mathematical calculation guidelines to strict RFC 2119 `MUST` (`MUST write ad-hoc Node/Python scripts to disk via native write first`), eliminating friction with inline `python -c` or `node -e` shell payload overflow.
+- **Playwright CLI Contract & Parameter Hardening**: Hardened selector target semantics (`screenshot takes selector target ONLY; auto-saved without output filename`), coupled with absolute bans on exploratory `--help` / `--version` probing.
+- **Prompt Signal-to-Noise Refinement**: Pruned conflicting `produce deliverables directly` clauses, streamlined `Windows arguments & paths` to focus 100% on quoting/escaping, and eliminated redundant artifact cleanup instructions.
+- **Ecosystem Description & Marketplace Alignment**: Harmonized GitHub About and documentation with official DSH marketplace card semantics, featuring standardized `SYSTEM.md replacement mode`.
+
+---
+
 ## Highlights in v1.7.0
 
 - **Environment Facts Hardening & Weak Modal Elimination**: Upgraded injected environment facts to strict RFC 2119 directives (`NEVER require/import as node modules`, `NEVER run exploratory probing`), completely eliminating weak modals (`Avoid`) and preventing exploratory startup probing.
