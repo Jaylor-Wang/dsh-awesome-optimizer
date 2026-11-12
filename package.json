@@ -1,6 +1,6 @@
 {
   "name": "dsh-awesome-optimizer",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Runtime policy guards, composite batch tooling, soft convergence guidance, reactive custom prompt engine, and A/B telemetry plugin for the official DeepSeek Harness (dsh) agent loop.",
   "type": "module",
   "main": "src/index.js",
@@ -57,8 +57,7 @@
     }
   },
   "engines": {
-    "node": ">=22.0.0",
-    "dsh": ">=0.2.2-rc.1"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "setup:local": "node scripts/setup-local.mjs",
@@ -87,7 +86,7 @@
     "telemetry",
     "composite-tools"
   ],
-  "peerDependencies": {
+  "devDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
     "@deepseek-ai/dsh-agent": "*",
     "@deepseek-ai/dsh-agent-loop": "*",
@@ -96,19 +95,5 @@
     "@deepseek-ai/dsh-system-prompt": "*",
     "@deepseek-ai/dsh-tools": "*",
     "@deepseek-ai/schemastery": ">=3.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-agent": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-agent-loop": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-session": {
-      "optional": true
-    },
-    "@deepseek-ai/schemastery": {
-      "optional": true
-    }
   }
 }

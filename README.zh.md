@@ -5,15 +5,16 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-31%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
 
-## v1.8.0 版本重要更新
+## v1.8.1 版本重要更新
 
+- **解除宿主要求限制（显示为「未声明宿主要求」）**：完全对齐 `dsh-tool-antigravity` 规范，移除了 `package.json` 中的 `engines.dsh` 并将所有 `@deepseek-ai/*` 宿主依赖收拢至开发时依赖（`devDependencies`），彻底消除了插件市场中计算生成的 `DSH >=0.2.2-rc.1 ∩ *` 约束标签，展示为纯净的「未声明宿主要求」，允许在任意 DSH 运行时环境下无阻碍安装与更新。
 - **重型任务复合命令链隔离拦截 (`CHAINED_HEAVY_COMMAND`)**：在 `tools/pre-execute` 阶段主动检测并拦截复合链（`&&`、`;`）中的重型构建、测试与发布命令（`npm test`、`npm run build`、`vitest`、`npm publish`），彻底杜绝 Windows 控制台管道死锁；同时放行纯净的 Git 流水线串联（`git add ... && git commit ... && git push`）。
 - **临时脚本落地磁盘硬约束升维 (`MUST`)**：将数学建模、复杂计算与辅助脚本的磁盘落地要求全面升级为最高级 RFC 2119 规范 `MUST write ad-hoc Node/Python scripts to disk`，并与 `NEVER embed multiline scripts` 形成工整对仗。
 - **Playwright CLI 选择器语义与探测硬约束加固**：明确 `screenshot` 仅接收 CSS 选择器且自动落盘（无输出文件名参数），配合 `--help` / `--version` 探针硬性禁令，消除多余回合损耗与选择器报错。

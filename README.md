@@ -5,15 +5,16 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-31%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 High-performance runtime policy guards, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
 
-## Highlights in v1.8.0
+## Highlights in v1.8.1
 
+- **Host Requirement Relaxation (`未声明宿主要求`)**: Removed `engines.dsh` constraint and migrated all `@deepseek-ai/*` peer dependencies to `devDependencies` (aligned with `dsh-tool-antigravity`), eliminating artificial version intersection tags (`DSH >=0.2.2-rc.1 ∩ *`) in DSH / Cordis plugin marketplace and enabling seamless installation across any DSH runtime.
 - **Heavy Task Chain Isolation Policy (`CHAINED_HEAVY_COMMAND`)**: Proactively intercepts heavy execution and publishing commands (`npm test`, `npm run build`, `vitest`, `npm publish`) in compound shell chains (`&&`, `;`) to prevent Windows console pipe deadlocks, while allowing seamless Git pipeline chaining (`git add ... && git commit ... && git push`).
 - **Normative Ad-Hoc Script Disk Writing Enforcement**: Elevated ad-hoc script and IK/mathematical calculation guidelines to strict RFC 2119 `MUST` (`MUST write ad-hoc Node/Python scripts to disk via native write first`), eliminating friction with inline `python -c` or `node -e` shell payload overflow.
 - **Playwright CLI Contract & Parameter Hardening**: Hardened selector target semantics (`screenshot takes selector target ONLY; auto-saved without output filename`), coupled with absolute bans on exploratory `--help` / `--version` probing.
