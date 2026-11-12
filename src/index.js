@@ -4,7 +4,7 @@ import { applyFileMutationPolicy, FileMutationPolicyConfig, FileMutationPolicyMa
 import { applyFailureRecovery, RecoveryRecord, RECOVERY_SOURCE, RETRY_TOOL, PAIRING_ERROR } from './failure-recovery.js';
 import { applyCompositeTools, CompositeToolsConfig, READ_BATCH_TOOL, EDIT_BATCH_TOOL } from './composite-tools.js';
 import { applyConvergence, ConvergenceConfig, SOURCE as CONVERGENCE_SOURCE, GUIDANCE, REMINDER } from './convergence.js';
-import { applyCustomPrompt, CustomPromptConfig, CustomPromptManager, SECTION_NAME as CUSTOM_PROMPT_SECTION } from './custom-prompt.js';
+import { applyCustomPrompt, CustomPromptConfig, CustomPromptManager, SECTION_NAME as CUSTOM_PROMPT_SECTION, ENVIRONMENT_FACTS_SECTION, formatEnvironmentFacts } from './custom-prompt.js';
 import { applyTelemetry, TelemetryConfig, AgentTelemetryManager, compareTurnSummaries } from './telemetry.js';
 
 import { lintPrompt, fixPrompt, lintPromptFile, RULE_IDS as PROMPT_LINT_RULES } from './prompt-linter.js';
@@ -82,6 +82,8 @@ export {
   POLICY_SOURCE,
   MUTATION_SOURCE,
   CUSTOM_PROMPT_SECTION,
+  ENVIRONMENT_FACTS_SECTION,
+  formatEnvironmentFacts,
   CustomPromptManager,
   applyCustomPrompt,
   lintPrompt,

@@ -180,3 +180,36 @@ test('customPrompt hot-reloads file changes reactively without restart', async (
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('customPrompt injects host environment facts to eliminate exploratory probing', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-custom-env-facts-test-'));
+  const globalFile = path.join(tempDir, 'SYSTEM.md');
+  fs.writeFileSync(globalFile, '# Refined Directives\nExecute cleanly.', 'utf8');
+
+  const host = await createTestRuntime({
+    optimizerConfig: {
+      customPrompt: {
+        enabled: true,
+        globalFile,
+        placement: 'replace-all',
+        injectEnvironmentFacts: true,
+        hotReload: false
+      }
+    },
+    script: [
+      [{ type: 'text', text: 'Done.' }]
+    ]
+  });
+
+  try {
+    await host.run('Check env facts');
+    const systemPromptText = extractPromptText(host.requests[0]);
+
+    assert.match(systemPromptText, /Host Environment & Tooling Facts/);
+    assert.match(systemPromptText, /Node\.js/);
+    assert.match(systemPromptText, /Standalone CLIs \(playwright-cli, gh, ast-grep, opencli\)/);
+  } finally {
+    await host.dispose();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});

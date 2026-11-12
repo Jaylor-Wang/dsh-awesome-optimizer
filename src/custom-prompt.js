@@ -7,6 +7,7 @@ export const name = 'agent-optimizer-custom-prompt';
 export const inject = ['systemPrompt'];
 export const SOURCE = 'optimizer-custom-prompt';
 export const SECTION_NAME = 'optimizer:custom-prompt';
+export const ENVIRONMENT_FACTS_SECTION = 'optimizer:environment-facts';
 export const DEFAULT_SECTION_ORDER = 10300;
 
 export const CustomPromptConfig = z.object({
@@ -18,8 +19,24 @@ export const CustomPromptConfig = z.object({
   sectionName: z.string().default(SECTION_NAME),
   mergeStrategy: z.union(['concat', 'workspace-override', 'global-only', 'workspace-only']).default('concat'),
   hotReload: z.boolean().default(true),
-  interpolate: z.boolean().default(false)
+  interpolate: z.boolean().default(false),
+  injectEnvironmentFacts: z.boolean().default(true)
 });
+
+/**
+ * Generate compact host environment facts to eliminate exploratory probing turns (pwd, ls, node -v).
+ */
+export function formatEnvironmentFacts(processRef = process) {
+  const version = processRef?.version || 'unknown';
+  const platform = processRef?.platform || 'unknown';
+  const arch = processRef?.arch || 'unknown';
+  return [
+    '## Host Environment & Tooling Facts',
+    `- Runtime: Node.js ${version} on ${platform} (${arch}).`,
+    '- Standalone CLIs (playwright-cli, gh, ast-grep, opencli) are executable binaries invoked via bash, NOT requireable node packages.',
+    '- Workspace state and runtime context are already established. Avoid exploratory probing (pwd, ls, node -v) unless new evidence requires it.'
+  ].join('\n');
+}
 
 /**
  * Resolve `$DSH_HOME` or default `~/.dsh`.
@@ -253,24 +270,32 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
     if (config.placement === 'replace-all') {
       // Retain optimizer's own sections (e.g. convergence guidance) while stripping all official verbose sections
       const optimizerSections = assembly.sections.filter(
-        s => typeof s.name === 'string' && s.name.startsWith('optimizer:') && s.name !== config.sectionName
+        s => typeof s.name === 'string' && s.name.startsWith('optimizer:') && s.name !== config.sectionName && s.name !== ENVIRONMENT_FACTS_SECTION
       );
+      const sections = [
+        {
+          name: config.sectionName,
+          text: customText,
+          interpolate: config.interpolate
+        }
+      ];
+      if (config.injectEnvironmentFacts) {
+        sections.push({
+          name: ENVIRONMENT_FACTS_SECTION,
+          text: formatEnvironmentFacts(),
+          interpolate: false
+        });
+      }
+      sections.push(...optimizerSections);
       return {
         ...assembly,
-        sections: [
-          {
-            name: config.sectionName,
-            text: customText,
-            interpolate: config.interpolate
-          },
-          ...optimizerSections
-        ]
+        sections
       };
     }
 
     // For suffix: if ctx.systemPrompt.section was not available, ensure it gets injected
+    const sections = [...assembly.sections];
     if (!ctx.systemPrompt?.section) {
-      const sections = [...assembly.sections];
       const existingIdx = sections.findIndex(s => s.name === config.sectionName);
       if (existingIdx >= 0) {
         sections[existingIdx] = { ...sections[existingIdx], text: customText };
@@ -281,8 +306,15 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
           interpolate: config.interpolate
         });
       }
-      return { ...assembly, sections };
     }
+    if (config.injectEnvironmentFacts && !sections.some(s => s.name === ENVIRONMENT_FACTS_SECTION)) {
+      sections.push({
+        name: ENVIRONMENT_FACTS_SECTION,
+        text: formatEnvironmentFacts(),
+        interpolate: false
+      });
+    }
+    return { ...assembly, sections };
 
     return assembly;
   });

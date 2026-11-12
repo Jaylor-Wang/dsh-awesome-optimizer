@@ -35,6 +35,7 @@ export declare const RULE_IDS: {
   CONSTRAINT_CASING: string;
   LEGACY_JARGON: string;
   UNCLOSED_BACKTICKS: string;
+  CLI_REQUIRE_CONFUSION: string;
 };
 
 export declare function resolveActiveToolNames(options?: PromptLintOptions): Set<string> | null;

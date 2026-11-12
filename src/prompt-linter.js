@@ -6,8 +6,16 @@ export const RULE_IDS = {
   WEAK_MODALS: 'weak-modals',
   CONSTRAINT_CASING: 'constraint-casing',
   LEGACY_JARGON: 'legacy-jargon',
-  UNCLOSED_BACKTICKS: 'unclosed-backticks'
+  UNCLOSED_BACKTICKS: 'unclosed-backticks',
+  CLI_REQUIRE_CONFUSION: 'cli-require-confusion'
 };
+
+const CLI_REQUIRE_PATTERNS = [
+  {
+    pattern: /\b(?:require|import)\s*\(?['"](?:playwright|gh|ast-grep|opencli)['"]\)?/gi,
+    suggestion: 'Standalone CLIs (playwright-cli, gh, ast-grep, opencli) must be executed via bash, not imported as node modules'
+  }
+];
 
 const WEAK_MODALS = [
   { pattern: /\b[Bb]ias(?:ed)?\s+toward\b/g, suggestion: 'Prioritize' },
@@ -205,6 +213,20 @@ export function lintPrompt(content = '', options = {}) {
         message: 'Unpaired single backtick detected on line; may corrupt prompt formatting.',
         fixable: false
       });
+    }
+
+    // 6. CLI Require Confusion Check
+    for (const cliRule of CLI_REQUIRE_PATTERNS) {
+      if (cliRule.pattern.test(line)) {
+        issues.push({
+          ruleId: RULE_IDS.CLI_REQUIRE_CONFUSION,
+          severity: 'warning',
+          line: lineNum,
+          message: `Attempting to require or import external CLI tool directly. ${cliRule.suggestion}.`,
+          fixable: false
+        });
+        cliRule.pattern.lastIndex = 0;
+      }
     }
   }
 

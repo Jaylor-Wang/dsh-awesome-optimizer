@@ -72,6 +72,8 @@ export {
   CustomPromptManager,
   applyCustomPrompt,
   SECTION_NAME as CUSTOM_PROMPT_SECTION,
+  ENVIRONMENT_FACTS_SECTION,
+  formatEnvironmentFacts,
   type CustomPromptOptions,
   type MergeStrategy,
   type PlacementMode

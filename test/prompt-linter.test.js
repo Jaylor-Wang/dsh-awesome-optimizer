@@ -100,3 +100,14 @@ test('lintPromptFile handles missing and valid files gracefully', () => {
 
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
+
+test('lintPrompt detects CLI require confusion', () => {
+  const confusingPrompt = [
+    '# Bad Directives',
+    '- For browser testing, use `const { chromium } = require("playwright")`.'
+  ].join('\n');
+
+  const result = lintPrompt(confusingPrompt);
+  assert.ok(result.issues.some(i => i.ruleId === PROMPT_LINT_RULES.CLI_REQUIRE_CONFUSION));
+  assert.ok(result.score < 100);
+});

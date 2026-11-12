@@ -5,6 +5,7 @@ export declare const name: 'agent-optimizer-custom-prompt';
 export declare const inject: ['systemPrompt'];
 export declare const SOURCE: 'optimizer-custom-prompt';
 export declare const SECTION_NAME: 'optimizer:custom-prompt';
+export declare const ENVIRONMENT_FACTS_SECTION: 'optimizer:environment-facts';
 export declare const DEFAULT_SECTION_ORDER = 10300;
 
 export type MergeStrategy = 'concat' | 'workspace-override' | 'global-only' | 'workspace-only';
@@ -20,9 +21,12 @@ export interface CustomPromptOptions {
   mergeStrategy?: MergeStrategy;
   hotReload?: boolean;
   interpolate?: boolean;
+  injectEnvironmentFacts?: boolean;
 }
 
 export declare const CustomPromptConfig: z<CustomPromptOptions>;
+
+export declare function formatEnvironmentFacts(processRef?: any): string;
 
 export declare function resolveDshHome(env?: NodeJS.ProcessEnv): string;
 export declare function resolveGlobalPath(filePath?: string, env?: NodeJS.ProcessEnv): string;
