@@ -235,6 +235,7 @@ test('detectPythonEnv safely detects and caches python or handles missing runtim
 
   const factsWithPy = formatEnvironmentFacts({ version: 'v22.0.0', platform: 'linux', arch: 'x64' }, () => py);
   assert.match(factsWithPy, /Node\.js v22\.0\.0, Python 3\.12\.2 \(python\) on linux \(x64\)\./);
+  assert.match(factsWithPy, /remove temporary artifacts directly via bash \(rm -rf\)/);
 
   // 2. Mock missing python
   resetPythonCacheForTesting();
