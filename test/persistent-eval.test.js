@@ -133,6 +133,27 @@ fetched + globalThis.offset;
     assert.equal(healedOut.trim(), '=> 30');
   });
 
+  test('queued tasks recover cleanly when preceding task crashes or times out', async () => {
+    const { ctx, registeredTools } = createMockContext();
+    serviceInstance = applyPersistentEval(ctx, {
+      enabled: true,
+      timeoutMs: 250
+    });
+
+    const pyTool = registeredTools.get(EVAL_PYTHON_TOOL);
+    const mockSession = { id: 'sess-queued-recovery' };
+    const execContext = { session: mockSession };
+
+    // Concurrently enqueue task 1 (hangs and gets killed) and task 2 (healthy)
+    const p1 = pyTool.execute({ code: 'while True: pass' }, execContext);
+    const p2 = pyTool.execute({ code: '"recovered second task"' }, execContext);
+
+    const [out1, out2] = await Promise.all([p1, p2]);
+
+    assert.ok(out1.includes('Execution timed out'));
+    assert.equal(out2.trim(), '=> \'recovered second task\'');
+  });
+
   test('anti-dumping guard truncates oversized output payloads', async () => {
     const { ctx, registeredTools } = createMockContext();
     serviceInstance = applyPersistentEval(ctx, {

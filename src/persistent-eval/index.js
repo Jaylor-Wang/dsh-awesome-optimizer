@@ -27,7 +27,14 @@ export function formatEvalOutput(resp) {
   }
 
   if (resp.result !== null && resp.result !== undefined) {
-    const repr = resp.resultRepr || (typeof resp.result === 'object' ? JSON.stringify(resp.result) : String(resp.result));
+    let repr = resp.resultRepr;
+    if (!repr) {
+      try {
+        repr = typeof resp.result === 'object' ? JSON.stringify(resp.result) : String(resp.result);
+      } catch {
+        repr = String(resp.result);
+      }
+    }
     parts.push(`=> ${repr}`);
   }
 

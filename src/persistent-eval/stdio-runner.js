@@ -193,8 +193,26 @@ export class StdioWorkerRunner {
     });
   }
 
-  _drainQueue() {
+  async _drainQueue() {
     if (this.currentTask || this.pendingQueue.length === 0 || this.isDestroyed) {
+      return;
+    }
+
+    // Ensure child process is healthy and ready before pulling tasks from queue
+    if (!this.child || !this.isReady) {
+      try {
+        await this.ensureStarted();
+      } catch (err) {
+        const task = this.pendingQueue.shift();
+        if (task) {
+          task.reject(err);
+        }
+        this._drainQueue();
+        return;
+      }
+    }
+
+    if (this.currentTask || this.pendingQueue.length === 0 || this.isDestroyed || !this.child) {
       return;
     }
 
@@ -220,7 +238,16 @@ export class StdioWorkerRunner {
   }
 
   _forceKill() {
-    if (this.child && !this.child.killed) {
+    if (!this.child) return;
+    const pid = this.child.pid;
+    try {
+      if (process.platform === 'win32' && pid) {
+        // Force terminate process tree on Windows to prevent orphan python processes
+        spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
+      } else {
+        this.child.kill('SIGKILL');
+      }
+    } catch {
       try {
         this.child.kill('SIGKILL');
       } catch {

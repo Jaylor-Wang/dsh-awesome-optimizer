@@ -111,7 +111,19 @@ async function executeInContext(code, context) {
 }
 
 function sendFrame(payload) {
-  const line = JSON.stringify(payload) + '\n';
+  let line;
+  try {
+    line = JSON.stringify(payload) + '\n';
+  } catch (err) {
+    line = JSON.stringify({
+      id: payload.id,
+      success: false,
+      error: `Failed to serialize response frame: ${err.message}`,
+      stdout: payload.stdout || '',
+      stderr: payload.stderr || '',
+      executionTimeMs: payload.executionTimeMs || 0
+    }) + '\n';
+  }
   process.stdout.write(line, 'utf-8');
 }
 
