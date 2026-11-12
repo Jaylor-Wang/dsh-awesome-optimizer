@@ -12,8 +12,9 @@ High-performance runtime policy guards, PTC-backed composite batch tooling, stan
 
 ---
 
-## Highlights in v1.6.0
+## Highlights in v1.6.1
 
+- **Cross-Platform Python Environment Detection (`detectPythonEnv`)**: Safely detects active Python runtimes (`python` / `python3` and version) with one-shot memoization and timeout guards, unblocking cross-platform parity while steering models gracefully to Node.js when Python is absent.
 - **Playwright File Protocol Guard (`PLAYWRIGHT_FILE_PROTOCOL_BLOCKED`)**: Pre-execution interception of `playwright-cli open/goto file://...` commands, steering models toward local HTTP loopback servers to eliminate protocol errors and orphaned browser processes.
 - **Host Environment Facts Injection (`injectEnvironmentFacts`)**: Zero-overhead injection of active Node.js version, platform, CLI tool boundaries, and browser protocol facts into system prompts, eliminating speculative startup probe turns (`node -v`, `which`).
 - **CLI vs NPM Module Import Confusion Guard**: Added `cli-require-confusion` static lint rule in Prompt Linter to detect and prevent treating standalone CLIs (`playwright-cli`, `gh`, `ast-grep`) as requireable npm packages.

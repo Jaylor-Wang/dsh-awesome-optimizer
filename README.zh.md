@@ -12,8 +12,9 @@
 
 ---
 
-## v1.6.0 版本重要更新
+## v1.6.1 版本重要更新
 
+- **Python 跨平台环境智能识别与单例缓存 (`detectPythonEnv`)**：在环境事实注水时自动探测当前系统 Python 可用性（`python` / `python3` 及版本号），抹平跨平台命令分歧；采用单例懒加载缓存与超时守卫，零首字延迟开销；未装配时自动引导模型纯粹使用 Node.js，杜绝盲目生成 `.py` 脚本导致的执行失败。
 - **Playwright `file:` 协议前置硬拦截 (`PLAYWRIGHT_FILE_PROTOCOL_BLOCKED`)**：在 `tools/pre-execute` 阶段主动检测并拦截 `playwright-cli open/goto file://...`，杜绝协议阻断异常与浏览器僵尸子进程，引导模型无缝切换至本地 HTTP 环回服务。
 - **轻量宿主环境事实注水 (`injectEnvironmentFacts`)**：系统提示词组装阶段自动注入 Node.js 版本、系统架构、独立 CLI 工具边界与 Playwright 协议指引，彻底消除模型开局盲目执行探针命令（`node -v`、`which`）。
 - **CLI 独立工具与 NPM 模块边界防混淆**：在 Prompt Linter 中新增 `cli-require-confusion` 静态规则，静态拦截将外部 CLI 工具（`playwright`、`gh`、`ast-grep`）当成 Node 模块导入的认知混淆错误。

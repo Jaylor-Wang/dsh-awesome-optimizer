@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,16 +24,45 @@ export const CustomPromptConfig = z.object({
   injectEnvironmentFacts: z.boolean().default(true)
 });
 
+let cachedPython = undefined;
+
+export function resetPythonCacheForTesting() {
+  cachedPython = undefined;
+}
+
+/**
+ * Safely detect active Python runtime with one-shot memoization and timeout guards.
+ */
+export function detectPythonEnv(spawnSyncFn = spawnSync) {
+  if (cachedPython !== undefined) return cachedPython;
+  for (const bin of ['python', 'python3']) {
+    try {
+      const res = spawnSyncFn(bin, ['--version'], { timeout: 600, encoding: 'utf8', windowsHide: true });
+      if (res && res.status === 0) {
+        const out = (res.stdout || res.stderr || '').trim();
+        if (out.startsWith('Python')) {
+          cachedPython = { bin, version: out };
+          return cachedPython;
+        }
+      }
+    } catch (_err) {}
+  }
+  cachedPython = null;
+  return null;
+}
+
 /**
  * Generate compact host environment facts to eliminate exploratory probing turns (pwd, ls, node -v).
  */
-export function formatEnvironmentFacts(processRef = process) {
+export function formatEnvironmentFacts(processRef = process, pythonDetector = detectPythonEnv) {
   const version = processRef?.version || 'unknown';
   const platform = processRef?.platform || 'unknown';
   const arch = processRef?.arch || 'unknown';
+  const py = typeof pythonDetector === 'function' ? pythonDetector() : null;
+  const pyInfo = py ? `, ${py.version} (${py.bin})` : ' (Python not detected; use Node.js for ad-hoc scripts)';
   return [
     '## Host Environment & Tooling Facts',
-    `- Runtime: Node.js ${version} on ${platform} (${arch}).`,
+    `- Runtime: Node.js ${version}${pyInfo} on ${platform} (${arch}).`,
     '- Standalone CLIs (playwright-cli, gh, ast-grep, opencli) are executable binaries invoked via bash, NOT requireable node packages.',
     '- Browser automation: playwright-cli blocks "file:" URLs; serve static HTML files via a local HTTP server (http://127.0.0.1:<port>) instead.',
     '- Workspace state and runtime context are already established. Avoid exploratory probing (pwd, ls, node -v) unless new evidence requires it.'

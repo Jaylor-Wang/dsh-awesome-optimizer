@@ -74,6 +74,9 @@ export {
   SECTION_NAME as CUSTOM_PROMPT_SECTION,
   ENVIRONMENT_FACTS_SECTION,
   formatEnvironmentFacts,
+  detectPythonEnv,
+  resetPythonCacheForTesting,
+  type PythonEnvInfo,
   type CustomPromptOptions,
   type MergeStrategy,
   type PlacementMode

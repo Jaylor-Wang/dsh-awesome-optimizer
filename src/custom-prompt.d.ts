@@ -24,9 +24,16 @@ export interface CustomPromptOptions {
   injectEnvironmentFacts?: boolean;
 }
 
+export interface PythonEnvInfo {
+  bin: string;
+  version: string;
+}
+
 export declare const CustomPromptConfig: z<CustomPromptOptions>;
 
-export declare function formatEnvironmentFacts(processRef?: any): string;
+export declare function detectPythonEnv(spawnSyncFn?: any): PythonEnvInfo | null;
+export declare function resetPythonCacheForTesting(): void;
+export declare function formatEnvironmentFacts(processRef?: any, pythonDetector?: () => PythonEnvInfo | null): string;
 
 export declare function resolveDshHome(env?: NodeJS.ProcessEnv): string;
 export declare function resolveGlobalPath(filePath?: string, env?: NodeJS.ProcessEnv): string;

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createTestRuntime } from './support/runtime.js';
-import { CUSTOM_PROMPT_SECTION } from '../src/index.js';
+import { CUSTOM_PROMPT_SECTION, detectPythonEnv, resetPythonCacheForTesting, formatEnvironmentFacts } from '../src/index.js';
 
 function extractPromptText(request) {
   if (!request) return '';
@@ -213,4 +213,36 @@ test('customPrompt injects host environment facts to eliminate exploratory probi
     await host.dispose();
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('detectPythonEnv safely detects and caches python or handles missing runtime', () => {
+  // 1. Mock detected python
+  resetPythonCacheForTesting();
+  let calls = 0;
+  const mockSpawnSuccess = (bin) => {
+    calls++;
+    if (bin === 'python') return { status: 0, stdout: 'Python 3.12.2\n' };
+    return { status: 1 };
+  };
+  const py = detectPythonEnv(mockSpawnSuccess);
+  assert.deepEqual(py, { bin: 'python', version: 'Python 3.12.2' });
+  // Second call should hit memoized cache without invoking spawnSyncFn
+  const cached = detectPythonEnv(mockSpawnSuccess);
+  assert.equal(cached, py);
+  assert.equal(calls, 1);
+
+  const factsWithPy = formatEnvironmentFacts({ version: 'v22.0.0', platform: 'linux', arch: 'x64' }, () => py);
+  assert.match(factsWithPy, /Node\.js v22\.0\.0, Python 3\.12\.2 \(python\) on linux \(x64\)\./);
+
+  // 2. Mock missing python
+  resetPythonCacheForTesting();
+  const mockSpawnFail = () => ({ status: 1 });
+  const pyMissing = detectPythonEnv(mockSpawnFail);
+  assert.equal(pyMissing, null);
+
+  const factsNoPy = formatEnvironmentFacts({ version: 'v24.0.0', platform: 'win32', arch: 'x64' }, () => null);
+  assert.match(factsNoPy, /Node\.js v24\.0\.0 \(Python not detected; use Node\.js for ad-hoc scripts\) on win32 \(x64\)\./);
+
+  // Restore live cache
+  resetPythonCacheForTesting();
 });
