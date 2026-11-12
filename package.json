@@ -61,7 +61,7 @@
   },
   "scripts": {
     "setup:local": "node scripts/setup-local.mjs",
-    "test": "node --test --test-timeout=15000 test/*.test.js",
+    "test": "node --test --test-concurrency=1 --test-timeout=10000 test/*.test.js",
     "typecheck": "node scripts/typecheck.mjs",
     "benchmark": "node scripts/benchmark.mjs"
   },
