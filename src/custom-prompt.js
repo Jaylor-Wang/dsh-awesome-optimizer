@@ -64,7 +64,7 @@ export function formatEnvironmentFacts(processRef = process, pythonDetector = de
     '## Host Environment & Tooling Facts',
     `- Runtime: Node.js ${version}${pyInfo} on ${platform} (${arch}).`,
     '- Standalone CLIs: playwright-cli, gh, ast-grep, and opencli are standalone binaries via bash; NEVER require/import as node modules.',
-    '- Browser automation: playwright-cli blocks "file:" URLs; serve static HTML via loopback HTTP (http://127.0.0.1:<port>).',
+    '- Browser automation: playwright-cli blocks "file:" URLs (serve via loopback HTTP); \'screenshot\' takes selector target ONLY (no output filename; auto-saved to .playwright-cli/). NEVER probe via \'--help\' or \'--version\'.',
     '- Zero startup probing: workspace context and host facts are already hydrated. NEVER run exploratory probing (pwd, ls, node -v, which).',
     '- Ad-hoc scripts & cleanup: ALWAYS write ad-hoc Node/Python scripts to disk via native write first and execute by file path; remove temporary artifacts directly via bash (rm -rf).'
   ].join('\n');
