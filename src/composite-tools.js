@@ -216,7 +216,7 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
     ctx.tools.register({
       name: EDIT_BATCH_TOOL,
       description: [
-        `Apply multiple targeted literal text edits (up to ${config.maxBatchEdits}) across one or more files in a single tool call.`,
+        `Apply multiple targeted literal text edits (up to ${config.maxBatchEdits}) in a single file or across multiple files in a single tool call.`,
         'Edits execute sequentially through the native edit tool pipeline with full sandbox, observation policy, and mutation checks.',
         'Useful for multi-file refactoring or multi-location revisions without sequential single-edit round trips.'
       ].join(' '),
@@ -229,7 +229,7 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
             type: 'array',
             minItems: 1,
             maxItems: config.maxBatchEdits,
-            description: `List of literal text edits (1 to ${config.maxBatchEdits} edits) to apply sequentially across one or more files.`,
+            description: `List of literal text edits (1 to ${config.maxBatchEdits} edits) to apply sequentially in a single file or across multiple files.`,
             items: {
               type: 'object',
               additionalProperties: false,
