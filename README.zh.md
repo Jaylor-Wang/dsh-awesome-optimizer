@@ -8,7 +8,7 @@
 [![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
-围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能非侵入式运行期防护、PTC 复合批处理工具、全新独立系统提示词接管（~80% Token 极致瘦身）与客观 A/B 轮次度量插件。
+围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
 
@@ -17,7 +17,7 @@
 - **RFC 2119 强约束语气与注意力锚定加固**：收敛软提醒全面升级为 `NEVER omit verification.`，杜绝步数压力下的偷懒与提前交卷；在常驻收敛规范、推荐模板及拦截提示中全局统一大写强约束词（`ONLY`、`NEVER`、`STRICTLY`）。
 - **工具定义与官方 DSH 契约像素级对齐**：`edit_batch` 参数描述精准对齐官方 `edit` 工具约定（显式要求提供 `file_path` 优先顺序），彻底消除动词混淆（统一为 `produce deliverables`），确保模型复用对原生工具的先验理解。
 - **细粒度复合网络命令拦截放行**：精准优化 `CHAINED_NETWORK_COMMAND` 防护规则，在彻底杜绝 `npm publish` 等 Windows 凭据与发布操作悬挂的同时，完全放行本地与协同的复合 `git push` 流水线。
-- **全新 `SYSTEM.md` 独立接管与 80% Token 极致瘦身 (`placement: "replace-all"`)**：彻底剥离官方约 2,000 tokens 的冗长提示词，全局统一由独立的 `~/.dsh/SYSTEM.md`（约 380 tokens）作为唯一最高指令集，每轮节省约 1.6K tokens 上下文空间。
+- **全新 `SYSTEM.md` 独立接管模式 (`placement: "replace-all"`)**：彻底剥离官方冗长提示词，全局统一由独立的 `~/.dsh/SYSTEM.md`（推荐模板约 380 tokens）作为唯一最高指令集，消除官方提示词对长上下文的挤占。
 
 ---
 
@@ -26,7 +26,7 @@
 ### 1. 系统提示词精简与文件驱动热重载 (`customPrompt`)
 
 - **独立接管模式 (`placement: "replace-all"`)**：
-  在 DSH 官方 `system-prompt/assemble` 组装瀑布流中，精确剥除官方 verbose 冗余章节（包括 `harness:*`、`deployment:*`、`tool:*`、`deliverable:*`、`web:*` 等），并保留会话收敛指导等协同章节，将原始高达 ~2,000 tokens 的提示词压缩至约 380 tokens（降幅达 **82%**）。
+  在 DSH 官方 `system-prompt/assemble` 组装瀑布流中，精确剥除官方 verbose 冗余章节（包括 `harness:*`、`deployment:*`、`tool:*`、`deliverable:*`、`web:*` 等），并保留会话收敛指导等协同章节，将系统提示词基线精简至约 380 tokens 的轻量核心指令。
 - **双层 Markdown 规约**：
   自动寻找全局配置 `~/.dsh/SYSTEM.md`（或 `$DSH_HOME/SYSTEM.md`）与项目级工作区配置 `.dsh/SYSTEM.md`（或 `SYSTEM.md`）。权责清晰，与面向角色的 `AGENTS.md` 解耦。
 - **毫秒级防抖热重载（Hot-Reload）**：
@@ -38,7 +38,7 @@
 
 | 指标维度 | 官方默认 System Prompt | 开启本插件优化后 | 收益 |
 | :--- | :--- | :--- | :--- |
-| **Token 占用** | ~2,000 tokens / 轮 | **~380 tokens / 轮** | **节省 ~82% 提示词消耗** |
+| **提示词上下文开销** | ~2,000 tokens / 轮 | **~380 tokens / 轮（推荐模板）** | **大幅释放有效上下文，杜绝冗余规则消耗** |
 | **长轮次会话累积** | 50 轮累计消耗 ~100K 冗余上下文 | 上下文干净紧凑，核心指令专注 | **显著缓解上下文漂移与遗忘** |
 | **配置修改生效** | 需重启服务或重载配置文件 | 文件修改保存即刻热生效 | **即写即调，毫秒级响应** |
 

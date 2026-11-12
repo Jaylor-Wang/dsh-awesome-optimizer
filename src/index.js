@@ -26,7 +26,7 @@ export const Config = z.object({
 });
 
 /**
- * Mount non-invasive runtime policy, write recovery, composite batch tools,
+ * Mount runtime policy guards, write recovery, composite batch tools,
  * soft convergence guidance, and objective turn telemetry around the official DSH agent loop.
  * Never disables @deepseek-ai/dsh-agent-loop or mutates agent/request parameters.
  */

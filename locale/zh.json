@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Agent 循环策略与收敛优化器",
-    "description": "围绕官方 DSH Agent Loop 的非侵入式运行期防护、PTC 复合批处理工具、轻量软预算提醒与 A/B 轮次度量插件。"
+    "description": "围绕官方 DSH Agent Loop 的运行时策略防护、PTC 复合批处理工具、轻量软预算提醒与 A/B 轮次度量插件。"
   }
 }

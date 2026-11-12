@@ -8,7 +8,7 @@ English | [中文](README.zh.md)
 [![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
-High-performance, non-invasive runtime policy, PTC-backed composite batch tooling, standalone refined system prompt engine (~80% token savings), and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
+High-performance runtime policy guards, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
 
@@ -17,7 +17,7 @@ High-performance, non-invasive runtime policy, PTC-backed composite batch toolin
 - **RFC 2119 Restrictive Modal Capitalization & Salience**: Convergence reminders enforce `NEVER omit verification.` to block premature completion under step pressure. Restrictive boundaries (`ONLY`, `NEVER`, `STRICTLY`) are capitalized consistently across guidance, templates, and runtime intercept reasons.
 - **Precision Tool Alignment with Official DSH Contracts**: `edit_batch` schema and parameter descriptions strictly mirror official `edit` tool semantics (`Provide file_path before old_string and new_string in the arguments`). Decoupled verbs (`produce deliverables`) prevent homonym collisions with native tools.
 - **Refined Command Chaining Policy**: Relaxed `CHAINED_NETWORK_COMMAND` to safely permit chained non-blocking local commands like `git push` while strictly preventing Windows hanging on credentials and publish (`npm publish`).
-- **Standalone `SYSTEM.md` Engine & ~80% Token Reduction (`placement: "replace-all"`)**: Completely prunes verbose official prompt sections, allowing a concise, standalone `~/.dsh/SYSTEM.md` (~380 tokens) to govern as the single authority. Saves ~1.6K tokens per turn.
+- **Standalone `SYSTEM.md` Engine (`placement: "replace-all"`)**: Completely prunes verbose official prompt sections, allowing a concise, standalone `~/.dsh/SYSTEM.md` (~380 tokens template) to govern as the single authority without official prompt overhead.
 
 ---
 
@@ -26,7 +26,7 @@ High-performance, non-invasive runtime policy, PTC-backed composite batch toolin
 ### 1. Refined System Prompt & File-Driven Hot-Reload (`customPrompt`)
 
 - **Standalone Mode (`placement: "replace-all"`)**:
-  Hooks into the DSH `system-prompt/assemble` waterfall to strip all official verbose sections (`harness:*`, `deployment:*`, `tool:*`, `deliverable:*`, `web:*`), preserving convergence guidance companion sections while presenting your refined `SYSTEM.md` as the standalone authority (~82% reduction from ~2,000 to ~380 tokens).
+  Hooks into the DSH `system-prompt/assemble` waterfall to strip all official verbose sections (`harness:*`, `deployment:*`, `tool:*`, `deliverable:*`, `web:*`), preserving convergence guidance companion sections while presenting your refined `SYSTEM.md` as the standalone authority.
 - **Dual-Layer Markdown Convention**:
   Automatically discovers global `~/.dsh/SYSTEM.md` (or `$DSH_HOME/SYSTEM.md`) and project workspace `.dsh/SYSTEM.md` (or `SYSTEM.md`), cleanly separating developer system defaults from repo-specific instructions.
 - **Millisecond Hot-Reload**:
@@ -38,7 +38,7 @@ High-performance, non-invasive runtime policy, PTC-backed composite batch toolin
 
 | Dimension | Official Default System Prompt | Optimized with This Plugin | Savings |
 | :--- | :--- | :--- | :--- |
-| **Token Usage** | ~2,000 tokens / turn | **~380 tokens / turn** | **~82% token reduction** |
+| **Prompt Context Footprint** | ~2,000 tokens / turn | **~380 tokens / turn (Template)** | **Frees context headroom; eliminates redundant rules** |
 | **Long Multi-Turn Sessions** | ~100K redundant tokens across 50 turns | Clean, focused, high-density context | **Mitigates context drift & forgetting** |
 | **Config Updates** | Requires restart or reload | Instant hot-reload on file save | **Immediate feedback** |
 

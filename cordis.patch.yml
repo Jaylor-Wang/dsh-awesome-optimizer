@@ -32,7 +32,7 @@
           globalFile: "~/.dsh/SYSTEM.md"
           workspaceFile: ".dsh/SYSTEM.md"
           # Placement modes:
-          # - "replace-all": Strip ALL verbose official sections and use ONLY the refined SYSTEM.md (~80% token savings!)
+          # - "replace-all": Strip ALL verbose official sections and use ONLY the refined SYSTEM.md
           # - "suffix": Append to end of official system prompt (Order 10300)
           placement: "replace-all"
           mergeStrategy: "concat"
