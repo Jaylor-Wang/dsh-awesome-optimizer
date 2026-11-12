@@ -156,3 +156,34 @@ test('runtimePolicy blocks chained network/credential commands while allowing lo
     await host.dispose();
   }
 });
+
+test('runtimePolicy blocks playwright-cli commands using file: protocol', async () => {
+  const fileCmd = 'playwright-cli open "file:///${PWD}/index.html"';
+  const httpCmd = 'playwright-cli open "http://127.0.0.1:8080/index.html"';
+
+  const host = await createTestRuntime({
+    optimizerConfig: {
+      runtimePolicy: {
+        mode: 'enforce'
+      }
+    },
+    script: [
+      [call('p1', 'bash', { command: fileCmd })],
+      [call('p2', 'bash', { command: httpCmd })],
+      [{ type: 'text', text: 'Browser navigation completed.' }]
+    ]
+  });
+
+  try {
+    await host.run('Run playwright commands');
+    assert.equal(host.errors.length, 0);
+    // p1 is blocked pre-execute; only p2 is allowed and executed
+    assert.equal(host.calls.length, 1);
+    assert.equal(host.calls[0].id, 'p2');
+
+    const summary = host.runtimePolicy.getSummary(host.agent.session);
+    assert.equal(summary.shellPayloadBlocks, 1);
+  } finally {
+    await host.dispose();
+  }
+});

@@ -354,6 +354,23 @@ export class RuntimePolicyManager {
         };
       }
 
+      // Guard against blocked file:// URLs in playwright-cli
+      const isPlaywrightFileUrl = /\bplaywright-cli\s+(?:open|goto)\s+['"]?file:/i.test(cmd);
+      if (isPlaywrightFileUrl) {
+        state.shellPayloadBlocks++;
+        state.policyDenials++;
+        if (exec.token !== undefined) state.deniedTokens.add(exec.token);
+        return {
+          kind: 'deny',
+          reason: JSON.stringify({
+            code: 'PLAYWRIGHT_FILE_PROTOCOL_BLOCKED',
+            reason: "Playwright CLI blocks access to the 'file:' protocol.",
+            nextAction: "Serve static HTML files via a local HTTP server (e.g. node http.createServer or npx serve) and access 'http://127.0.0.1:<port>' instead.",
+            retryable: false
+          })
+        };
+      }
+
       // Guard against dangerous network/credential command chaining on Windows
       if (this.config.disallowChainedNetworkCommands) {
         const hasCompoundOperator = /(&&|;)/.test(cmd);

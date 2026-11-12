@@ -34,6 +34,7 @@ export function formatEnvironmentFacts(processRef = process) {
     '## Host Environment & Tooling Facts',
     `- Runtime: Node.js ${version} on ${platform} (${arch}).`,
     '- Standalone CLIs (playwright-cli, gh, ast-grep, opencli) are executable binaries invoked via bash, NOT requireable node packages.',
+    '- Browser automation: playwright-cli blocks "file:" URLs; serve static HTML files via a local HTTP server (http://127.0.0.1:<port>) instead.',
     '- Workspace state and runtime context are already established. Avoid exploratory probing (pwd, ls, node -v) unless new evidence requires it.'
   ].join('\n');
 }

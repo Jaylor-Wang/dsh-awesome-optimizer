@@ -208,6 +208,7 @@ test('customPrompt injects host environment facts to eliminate exploratory probi
     assert.match(systemPromptText, /Host Environment & Tooling Facts/);
     assert.match(systemPromptText, /Node\.js/);
     assert.match(systemPromptText, /Standalone CLIs \(playwright-cli, gh, ast-grep, opencli\)/);
+    assert.match(systemPromptText, /playwright-cli blocks "file:" URLs/);
   } finally {
     await host.dispose();
     fs.rmSync(tempDir, { recursive: true, force: true });

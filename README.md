@@ -59,6 +59,8 @@ High-performance runtime policy guards, PTC-backed composite batch tooling, stan
   Automatically blocks commands exceeding `4096` bytes or inline scripts (`node -e`, `python -c`, `pwsh -Command`) exceeding `512` bytes, steering the model to write deliverables to disk first.
 - **Windows Chained Network Command Guard (`CHAINED_NETWORK_COMMAND`)**:
   Intercepts compound shell commands that chain network/credential-bound operations (`npm publish`) with local operations during `tools/pre-execute`. Enforces clean two-tier execution: local operations chained via `&&` for zero-RTT speed, and network operations isolated standalone to eliminate Windows process handle hanging and 120s timeouts.
+- **Playwright File Protocol Guard (`PLAYWRIGHT_FILE_PROTOCOL_BLOCKED`)**:
+  Pre-execution guard against `playwright-cli open/goto file://...` commands, steering models toward local HTTP loopback servers to prevent protocol errors and orphaned browser processes.
 - **Full Overwrite Protection & Single-Shot Recovery (`failureRecovery`)**:
   Prevents accidental destructive `write` overwrites on existing large files when `edit` is available. Automatically registers `retry_failed_write` when a large write (8KB–1MB) is rejected due to an unpaired justification, avoiding costly regeneration.
 
