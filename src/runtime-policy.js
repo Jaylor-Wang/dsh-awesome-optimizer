@@ -371,23 +371,23 @@ export class RuntimePolicyManager {
         };
       }
 
-      // Guard against dangerous network/credential command chaining on Windows
+      // Guard against dangerous heavy concurrent or publishing command chaining on Windows
       if (this.config.disallowChainedNetworkCommands) {
         const hasCompoundOperator = /(&&|;)/.test(cmd);
         if (hasCompoundOperator) {
           // Strip quoted string literals to prevent false positives in commit messages / echo args
           const unquoted = cmd.replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, '""').replace(/'[^'\\]*(?:\\.[^'\\]*)*'/g, "''");
-          const hasChainedNetworkAction = /(?:^|[\s;&|])(?:npm\s+publish|gh\s+(?:pr|issue|release)\s+create|git\s+push)\b/i.test(unquoted);
-          if (hasChainedNetworkAction) {
+          const hasBlockedCompoundAction = /(?:^|[\s;&|])(?:npm\s+(?:test|t|run\s+build|publish)|vitest)\b/i.test(unquoted);
+          if (hasBlockedCompoundAction) {
             state.shellPayloadBlocks++;
             state.policyDenials++;
             if (exec.token !== undefined) state.deniedTokens.add(exec.token);
             return {
               kind: 'deny',
               reason: JSON.stringify({
-                code: 'CHAINED_NETWORK_COMMAND',
-                reason: "Chaining network/credential-bound commands ('git push', 'npm publish') with other commands causes Windows process handle hanging and 120s timeouts.",
-                nextAction: "Separate into independent steps: execute local operations first, then run network command standalone.",
+                code: 'CHAINED_HEAVY_COMMAND',
+                reason: "Heavy concurrent or publishing tasks ('npm test', 'npm run build', 'vitest', 'npm publish') must run standalone to prevent Windows process handle hanging and 120s timeouts.",
+                nextAction: "Separate into independent steps: execute heavy tasks standalone, then chain lightweight sequential operations.",
                 retryable: false
               })
             };

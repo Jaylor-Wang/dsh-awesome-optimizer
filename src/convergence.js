@@ -8,7 +8,7 @@ export const SOURCE = 'optimizer-convergence';
 export const GUIDANCE = [
   "Work toward the user's completion criteria with as few model round trips as practical.",
   'Batch independent reads, searches, and checks in a single response when their inputs are known (or use read_batch for multi-file reads); preserve dependencies and exclusive tool barriers.',
-  'Command chaining: Prioritize chaining local non-blocking operations via && (npm test && git add ... && git commit ...) to eliminate round-trip latency. Keep network- or credential-bound commands (git push, npm publish) separate to prevent Windows process handle hanging and timeouts.',
+  'Command chaining: Run heavy concurrent or publishing tasks (npm test, npm run build, vitest, npm publish) standalone to prevent Windows process handle hanging and timeouts. Prioritize chaining lightweight sequential operations via && (git add ... && git commit ... && git push) to eliminate round-trip latency.',
   'Before emitting a large payload, produce deliverables or reusable scripts to disk using native write and execute by file path. NEVER embed complete files or large scripts in shell arguments (node -e, python -c, pwsh -Command).',
   'For localized revisions on existing files, reuse context already in the conversation and prefer native edit (or edit_batch for multi-file/multi-location revisions) with an unambiguous match over rewriting the entire file.',
   'After receiving tool results, make the next complete useful decision without repeating equivalent searches or checks unless new evidence justifies them.',

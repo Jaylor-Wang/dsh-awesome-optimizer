@@ -122,13 +122,14 @@ test('runtimePolicy blocks oversized shell commands and large inline scripts on 
   }
 });
 
-test('runtimePolicy blocks chained network/credential commands while allowing local compound commands and standalone network commands', async () => {
-  const chainedNetworkCmd = 'git add . && git commit -m "feat" && npm publish && npm test';
-  const chainedGitPushCmd = 'git add . && git commit -m "feat" && git push origin main';
-  const localCompoundCmd = 'npm test && git add . && git commit -m "feat"';
-  const allowedPullCmd = 'git checkout main && git pull';
-  const commitWithKeywordCmd = 'git add . && git commit -m "docs: explain npm publish and git push"';
-  const standaloneNetworkCmd = 'npm publish';
+test('runtimePolicy blocks chained heavy concurrent or publishing tasks while allowing pure git workflow chaining', async () => {
+  const chainedNpmTestCmd = 'npm test && git status';
+  const chainedBuildCmd = 'npm run build && git status';
+  const chainedVitestCmd = 'vitest run && git status';
+  const chainedPublishCmd = 'git status && npm publish';
+  const chainedGitWorkflowCmd = 'git add . && git commit -m "feat" && git push origin main';
+  const commitWithKeywordCmd = 'git add . && git commit -m "docs: run tests and publish"';
+  const standaloneHeavyCmd = 'npm test';
 
   const host = await createTestRuntime({
     optimizerConfig: {
@@ -138,28 +139,29 @@ test('runtimePolicy blocks chained network/credential commands while allowing lo
       }
     },
     script: [
-      [call('c1', 'bash', { command: chainedNetworkCmd })],
-      [call('c1_git', 'bash', { command: chainedGitPushCmd })],
-      [call('c2', 'bash', { command: localCompoundCmd })],
-      [call('c2_pull', 'bash', { command: allowedPullCmd })],
-      [call('c2_commit', 'bash', { command: commitWithKeywordCmd })],
-      [call('c3', 'bash', { command: standaloneNetworkCmd })],
+      [call('c_block1', 'bash', { command: chainedNpmTestCmd })],
+      [call('c_block2', 'bash', { command: chainedBuildCmd })],
+      [call('c_block3', 'bash', { command: chainedVitestCmd })],
+      [call('c_block4', 'bash', { command: chainedPublishCmd })],
+      [call('c_git', 'bash', { command: chainedGitWorkflowCmd })],
+      [call('c_commit', 'bash', { command: commitWithKeywordCmd })],
+      [call('c_standalone', 'bash', { command: standaloneHeavyCmd })],
       [{ type: 'text', text: 'All operations safely executed.' }]
     ]
   });
 
   try {
-    await host.run('Run network command checks');
+    await host.run('Run heavy command checks');
     assert.equal(host.errors.length, 0);
-    // c1 and c1_git are blocked pre-execute due to chained network action; c2, c2_pull, c2_commit, and c3 are allowed and executed
-    assert.equal(host.calls.length, 4);
-    assert.equal(host.calls[0].id, 'c2');
-    assert.equal(host.calls[1].id, 'c2_pull');
-    assert.equal(host.calls[2].id, 'c2_commit');
-    assert.equal(host.calls[3].id, 'c3');
+    // 4 blocked due to chained heavy tasks (npm test, npm run build, vitest, npm publish)
+    // 3 allowed: chained pure git, commit with keywords, and standalone heavy task
+    assert.equal(host.calls.length, 3);
+    assert.equal(host.calls[0].id, 'c_git');
+    assert.equal(host.calls[1].id, 'c_commit');
+    assert.equal(host.calls[2].id, 'c_standalone');
 
     const summary = host.runtimePolicy.getSummary(host.agent.session);
-    assert.equal(summary.shellPayloadBlocks, 2);
+    assert.equal(summary.shellPayloadBlocks, 4);
   } finally {
     await host.dispose();
   }
