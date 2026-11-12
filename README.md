@@ -59,8 +59,8 @@ High-performance runtime policy guards, PTC-backed composite batch tooling, stan
   Computes deterministic tool invocation fingerprints. If an identical failing tool call repeats up to `noProgressLimit` (default `2`), the plugin blocks execution at `tools/pre-execute`, forcing the agent to adapt its diagnostic approach.
 - **Windows Oversized Shell Command Interception (`EMBEDDED_SHELL_PAYLOAD_TOO_LARGE`)**:
   Automatically blocks commands exceeding `4096` bytes or inline scripts (`node -e`, `python -c`, `pwsh -Command`) exceeding `512` bytes, steering the model to write deliverables to disk first.
-- **Windows Chained Network Command Guard (`CHAINED_NETWORK_COMMAND`)**:
-  Intercepts compound shell commands that chain network/credential-bound operations (`npm publish`) with local operations during `tools/pre-execute`. Enforces clean two-tier execution: local operations chained via `&&` for zero-RTT speed, and network operations isolated standalone to eliminate Windows process handle hanging and 120s timeouts.
+- **Windows Chained Heavy Task Guard (`CHAINED_HEAVY_COMMAND`)**:
+  Intercepts compound shell commands that chain heavy concurrent or publishing tasks (`npm test`, `npm run build`, `vitest`, `npm publish`) with other operations during `tools/pre-execute`. Enforces clean two-tier execution: heavy tasks isolated standalone to prevent Windows process handle hanging and deadlocks, while lightweight Git workflows chain via `&&` for zero-RTT speed.
 - **Playwright File Protocol Guard (`PLAYWRIGHT_FILE_PROTOCOL_BLOCKED`)**:
   Pre-execution guard against `playwright-cli open/goto file://...` commands, steering models toward local HTTP loopback servers to prevent protocol errors and orphaned browser processes.
 - **Full Overwrite Protection & Single-Shot Recovery (`failureRecovery`)**:
@@ -173,7 +173,7 @@ You are a master autonomous software engineer powered by DeepSeek Harness.
   - File ops: produce deliverables directly. MUST use `edit_batch` for 2+ edits (whether in one file or across multiple files); use `edit` for a single edit, and `write` for new files or ad-hoc Node/Python scripts.
   - Staged refactor: preview, then apply — symbol renames via `lsp rename` (dry-run → `--apply`); structural rewrites via `ast-grep run -p ... -r ...` (then `-U`).
   - Structured data: process STRICTLY via ad-hoc Node/Python scripts passed via stdin or temp files; NEVER dump raw data into context.
-  - Shell execution: run heavy concurrent or publishing tasks (`npm test`, `npm run build`, `vitest`, `npm publish`) standalone to prevent Windows process handle hanging and timeouts. Prioritize chaining lightweight sequential operations via `&&` (`git add ... && git commit ... && git push ...`) to eliminate round-trip latency.
+  - Shell execution: run heavy tasks (`npm test`, `npm run build`, `vitest`, `npm publish`) standalone to prevent Windows deadlocks; chain lightweight commands via `&&` (`git add ... && git commit ... && git push`) to eliminate round trips.
 - Reporting: diffs and evidence first; zero filler. Routine status ≤ 300 Chinese characters. Answer/explain/review/diagnose/plan: no length cap. Compact locators, lists, and deltas only.
 
 ## Verification

@@ -386,8 +386,8 @@ export class RuntimePolicyManager {
               kind: 'deny',
               reason: JSON.stringify({
                 code: 'CHAINED_HEAVY_COMMAND',
-                reason: "Heavy concurrent or publishing tasks ('npm test', 'npm run build', 'vitest', 'npm publish') must run standalone to prevent Windows process handle hanging and 120s timeouts.",
-                nextAction: "Separate into independent steps: execute heavy tasks standalone, then chain lightweight sequential operations.",
+                reason: "Heavy tasks ('npm test', 'npm run build', 'vitest', 'npm publish') must run standalone to prevent Windows deadlocks.",
+                nextAction: "Execute heavy tasks standalone, then chain lightweight commands via '&&'.",
                 retryable: false
               })
             };
