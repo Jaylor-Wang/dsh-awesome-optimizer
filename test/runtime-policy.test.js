@@ -126,6 +126,7 @@ test('runtimePolicy blocks chained network/credential commands while allowing lo
   const chainedNetworkCmd = 'git add . && git commit -m "feat" && npm publish && npm test';
   const chainedGitPushCmd = 'git add . && git commit -m "feat" && git push origin main';
   const localCompoundCmd = 'git add . && git commit -m "feat" && npm test';
+  const commitWithKeywordCmd = 'git add . && git commit -m "docs: explain npm publish and git push"';
   const standaloneNetworkCmd = 'npm publish';
 
   const host = await createTestRuntime({
@@ -139,6 +140,7 @@ test('runtimePolicy blocks chained network/credential commands while allowing lo
       [call('c1', 'bash', { command: chainedNetworkCmd })],
       [call('c1_git', 'bash', { command: chainedGitPushCmd })],
       [call('c2', 'bash', { command: localCompoundCmd })],
+      [call('c2_commit', 'bash', { command: commitWithKeywordCmd })],
       [call('c3', 'bash', { command: standaloneNetworkCmd })],
       [{ type: 'text', text: 'All operations safely executed.' }]
     ]
@@ -147,10 +149,11 @@ test('runtimePolicy blocks chained network/credential commands while allowing lo
   try {
     await host.run('Run network command checks');
     assert.equal(host.errors.length, 0);
-    // c1 and c1_git are blocked pre-execute due to chained network action; c2 and c3 are allowed and executed
-    assert.equal(host.calls.length, 2);
+    // c1 and c1_git are blocked pre-execute due to chained network action; c2, c2_commit, and c3 are allowed and executed
+    assert.equal(host.calls.length, 3);
     assert.equal(host.calls[0].id, 'c2');
-    assert.equal(host.calls[1].id, 'c3');
+    assert.equal(host.calls[1].id, 'c2_commit');
+    assert.equal(host.calls[2].id, 'c3');
 
     const summary = host.runtimePolicy.getSummary(host.agent.session);
     assert.equal(summary.shellPayloadBlocks, 2);
