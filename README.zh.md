@@ -12,12 +12,12 @@
 
 ---
 
-## v1.5.0 版本重要更新
+## v1.6.0 版本重要更新
 
-- **RFC 2119 强约束语气与注意力锚定加固**：收敛软提醒全面升级为 `NEVER omit verification.`，杜绝步数压力下的偷懒与提前交卷；在常驻收敛规范、推荐模板及拦截提示中全局统一大写强约束词（`ONLY`、`NEVER`、`STRICTLY`）。
-- **工具定义与官方 DSH 契约像素级对齐**：`edit_batch` 参数描述精准对齐官方 `edit` 工具约定（显式要求提供 `file_path` 优先顺序），彻底消除动词混淆（统一为 `produce deliverables`），确保模型复用对原生工具的先验理解。
-- **细粒度复合网络命令拦截放行**：精准优化 `CHAINED_NETWORK_COMMAND` 防护规则，在彻底杜绝 `npm publish` 等 Windows 凭据与发布操作悬挂的同时，完全放行本地与协同的复合 `git push` 流水线。
-- **全新 `SYSTEM.md` 独立接管模式 (`placement: "replace-all"`)**：彻底剥离官方冗长提示词，全局统一由独立的 `~/.dsh/SYSTEM.md`（推荐模板约 380 tokens）作为唯一最高指令集，消除官方提示词对长上下文的挤占。
+- **Playwright `file:` 协议前置硬拦截 (`PLAYWRIGHT_FILE_PROTOCOL_BLOCKED`)**：在 `tools/pre-execute` 阶段主动检测并拦截 `playwright-cli open/goto file://...`，杜绝协议阻断异常与浏览器僵尸子进程，引导模型无缝切换至本地 HTTP 环回服务。
+- **轻量宿主环境事实注水 (`injectEnvironmentFacts`)**：系统提示词组装阶段自动注入 Node.js 版本、系统架构、独立 CLI 工具边界与 Playwright 协议指引，彻底消除模型开局盲目执行探针命令（`node -v`、`which`）。
+- **CLI 独立工具与 NPM 模块边界防混淆**：在 Prompt Linter 中新增 `cli-require-confusion` 静态规则，静态拦截将外部 CLI 工具（`playwright`、`gh`、`ast-grep`）当成 Node 模块导入的认知混淆错误。
+- **复合批处理工具语义精准化与规范收敛**：`read_batch` 与 `edit_batch` 全面加固为 `MUST` 硬约束，精准规范单/多文件介词与数量阈值；精炼 Windows 参数与路径指令，去除冗余科普并强化 `NEVER raw shell arguments` 边界。
 
 ---
 

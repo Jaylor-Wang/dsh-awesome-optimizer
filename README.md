@@ -12,12 +12,12 @@ High-performance runtime policy guards, PTC-backed composite batch tooling, stan
 
 ---
 
-## Highlights in v1.5.0
+## Highlights in v1.6.0
 
-- **RFC 2119 Restrictive Modal Capitalization & Salience**: Convergence reminders enforce `NEVER omit verification.` to block premature completion under step pressure. Restrictive boundaries (`ONLY`, `NEVER`, `STRICTLY`) are capitalized consistently across guidance, templates, and runtime intercept reasons.
-- **Precision Tool Alignment with Official DSH Contracts**: `edit_batch` schema and parameter descriptions strictly mirror official `edit` tool semantics (`Provide file_path before old_string and new_string in the arguments`). Decoupled verbs (`produce deliverables`) prevent homonym collisions with native tools.
-- **Refined Command Chaining Policy**: Relaxed `CHAINED_NETWORK_COMMAND` to safely permit chained non-blocking local commands like `git push` while strictly preventing Windows hanging on credentials and publish (`npm publish`).
-- **Standalone `SYSTEM.md` Engine (`placement: "replace-all"`)**: Completely prunes verbose official prompt sections, allowing a concise, standalone `~/.dsh/SYSTEM.md` (~380 tokens template) to govern as the single authority without official prompt overhead.
+- **Playwright File Protocol Guard (`PLAYWRIGHT_FILE_PROTOCOL_BLOCKED`)**: Pre-execution interception of `playwright-cli open/goto file://...` commands, steering models toward local HTTP loopback servers to eliminate protocol errors and orphaned browser processes.
+- **Host Environment Facts Injection (`injectEnvironmentFacts`)**: Zero-overhead injection of active Node.js version, platform, CLI tool boundaries, and browser protocol facts into system prompts, eliminating speculative startup probe turns (`node -v`, `which`).
+- **CLI vs NPM Module Import Confusion Guard**: Added `cli-require-confusion` static lint rule in Prompt Linter to detect and prevent treating standalone CLIs (`playwright-cli`, `gh`, `ast-grep`) as requireable npm packages.
+- **Refined Batch Tooling Directives & Windows Arguments Streamlining**: Upgraded batch scheduling directives to `MUST`, eliminated cross-file grammatical ambiguities, and streamlined Windows arguments instructions by 52% with strict `NEVER raw shell arguments` enforcement.
 
 ---
 
