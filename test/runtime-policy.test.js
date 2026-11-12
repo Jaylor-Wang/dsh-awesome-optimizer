@@ -126,6 +126,7 @@ test('runtimePolicy blocks chained network/credential commands while allowing lo
   const chainedNetworkCmd = 'git add . && git commit -m "feat" && npm publish && npm test';
   const chainedGitPushCmd = 'git add . && git commit -m "feat" && git push origin main';
   const localCompoundCmd = 'npm test && git add . && git commit -m "feat"';
+  const allowedPullCmd = 'git checkout main && git pull';
   const commitWithKeywordCmd = 'git add . && git commit -m "docs: explain npm publish and git push"';
   const standaloneNetworkCmd = 'npm publish';
 
@@ -140,6 +141,7 @@ test('runtimePolicy blocks chained network/credential commands while allowing lo
       [call('c1', 'bash', { command: chainedNetworkCmd })],
       [call('c1_git', 'bash', { command: chainedGitPushCmd })],
       [call('c2', 'bash', { command: localCompoundCmd })],
+      [call('c2_pull', 'bash', { command: allowedPullCmd })],
       [call('c2_commit', 'bash', { command: commitWithKeywordCmd })],
       [call('c3', 'bash', { command: standaloneNetworkCmd })],
       [{ type: 'text', text: 'All operations safely executed.' }]
@@ -149,11 +151,12 @@ test('runtimePolicy blocks chained network/credential commands while allowing lo
   try {
     await host.run('Run network command checks');
     assert.equal(host.errors.length, 0);
-    // c1 and c1_git are blocked pre-execute due to chained network action; c2, c2_commit, and c3 are allowed and executed
-    assert.equal(host.calls.length, 3);
+    // c1 and c1_git are blocked pre-execute due to chained network action; c2, c2_pull, c2_commit, and c3 are allowed and executed
+    assert.equal(host.calls.length, 4);
     assert.equal(host.calls[0].id, 'c2');
-    assert.equal(host.calls[1].id, 'c2_commit');
-    assert.equal(host.calls[2].id, 'c3');
+    assert.equal(host.calls[1].id, 'c2_pull');
+    assert.equal(host.calls[2].id, 'c2_commit');
+    assert.equal(host.calls[3].id, 'c3');
 
     const summary = host.runtimePolicy.getSummary(host.agent.session);
     assert.equal(summary.shellPayloadBlocks, 2);

@@ -377,7 +377,7 @@ export class RuntimePolicyManager {
         if (hasCompoundOperator) {
           // Strip quoted string literals to prevent false positives in commit messages / echo args
           const unquoted = cmd.replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, '""').replace(/'[^'\\]*(?:\\.[^'\\]*)*'/g, "''");
-          const hasChainedNetworkAction = /(?:^|[\s;&|])(?:npm\s+publish|gh\s+(?:pr|issue|release)\s+create|git\s+(?:push|fetch|pull))\b/i.test(unquoted);
+          const hasChainedNetworkAction = /(?:^|[\s;&|])(?:npm\s+publish|gh\s+(?:pr|issue|release)\s+create|git\s+push)\b/i.test(unquoted);
           if (hasChainedNetworkAction) {
             state.shellPayloadBlocks++;
             state.policyDenials++;
