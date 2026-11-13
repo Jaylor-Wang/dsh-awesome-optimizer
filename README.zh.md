@@ -21,8 +21,8 @@
 - **PTC 子调用隔离与策略护栏精度提升**：
   - `runtimePolicy` 补齐 `edit_batch` / `eval_python` / `eval_node` 分类，隔离 `exec.parent !== undefined` 并发子调用避免 `read_batch` 竞态，支持拦截带中间参数的内联脚本（如 `pwsh -NoProfile -Command`、`python -u -c`），并去除引号内关键字误杀。
   - `fileMutationPolicy` 由流水线内成功子 `read` 精确记录文件观察状态；`failureRecovery` 将 `eval_python` / `eval_node` 纳入非变更白名单，避免误作废 `retry_failed_write`。
-- **提示词裁剪安全、Linter 与遥测性能优化**：
-  - `customPrompt` 的 `replace-all` 模式默认仅按 `OFFICIAL_SECTION_PREFIXES` 精准剥离官方冗余段，默认保留宿主/第三方 section，新增 `preserveSections`、`includeCliFacts` 与 `extraEnvironmentFacts`，并支持 `.dsh/` 目录延迟创建后的热重载。
+- **提示词热重载、Linter 与遥测性能优化**：
+  - `customPrompt` 的 `replace-all` 保持 2.1.0 纯粹全清接管语义，新增 `includeCliFacts` 与 `extraEnvironmentFacts` 配置项，支持 `.dsh/` 目录延迟创建及 Windows 大小写不敏感热重载，并清理死代码。
   - `telemetry` 引入 `WeakMap` 消息摘要缓存将前缀比对由 `O(N²)` 降为 `O(N)`；`prompt-linter` 的 `fixPrompt` 跳过代码块并修正 `fixable` 标记。
 
 ---

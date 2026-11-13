@@ -21,8 +21,8 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
 - **PTC Sub-Call Isolation & Guard Accuracy**:
   - `runtimePolicy` now classifies `edit_batch`, `eval_python`, and `eval_node`, isolates nested `exec.parent !== undefined` sub-calls during parallel `read_batch`, catches flagged inline scripts (`pwsh -NoProfile -Command`, `python -u -c`), and avoids false positives inside quoted commit messages.
   - `fileMutationPolicy` delegates `read_batch` observation to successful leaf `read` pipeline results; `failureRecovery` preserves pending `retry_failed_write` records across `eval_python` / `eval_node` calls.
-- **Safer Custom Prompt Replacement, Linter & Telemetry**:
-  - `customPrompt` `replace-all` mode now strips only `OFFICIAL_SECTION_PREFIXES` by default (preserving non-official host/plugin sections), adds `preserveSections`, `includeCliFacts`, and `extraEnvironmentFacts`, and supports deferred `.dsh/` directory hot-reload.
+- **Custom Prompt Hot-Reload, Linter & Telemetry**:
+  - `customPrompt` retains clean `replace-all` full-section replacement (2.1.0 semantics), adds `includeCliFacts` and `extraEnvironmentFacts` toggles, fixes deferred `.dsh/` directory creation hot-reload (with case-insensitive Windows matching), and removes dead waterfall code.
   - `telemetry` caches per-message SHA-256 digests (`WeakMap`) to eliminate `O(N²)` prefix-check serialization; `prompt-linter` preserves fenced code blocks in `fixPrompt`.
 
 ---

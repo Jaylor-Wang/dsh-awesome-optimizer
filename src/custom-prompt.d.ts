@@ -7,7 +7,6 @@ export declare const SOURCE: 'optimizer-custom-prompt';
 export declare const SECTION_NAME: 'optimizer:custom-prompt';
 export declare const ENVIRONMENT_FACTS_SECTION: 'optimizer:environment-facts';
 export declare const DEFAULT_SECTION_ORDER = 10300;
-export declare const OFFICIAL_SECTION_PREFIXES: readonly string[];
 
 export type MergeStrategy = 'concat' | 'workspace-override' | 'global-only' | 'workspace-only';
 export type PlacementMode = 'replace-all' | 'suffix';
@@ -25,8 +24,6 @@ export interface CustomPromptOptions {
   injectEnvironmentFacts?: boolean;
   includeCliFacts?: boolean;
   extraEnvironmentFacts?: string[];
-  preserveSections?: string[];
-  stripAllNonOptimizer?: boolean;
 }
 
 export interface PythonEnvInfo {

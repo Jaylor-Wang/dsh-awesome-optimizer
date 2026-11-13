@@ -21,7 +21,7 @@ const config: AgentOptimizerConfig = {
   compositeTools: { enabled: true, readBatch: true, maxBatchFiles: 10 },
   persistentEval: { enabled: true, python: true, node: true, timeoutMs: 15000 },
   convergence: { enabled: true, injectGuidance: true, softStepBudget: 8 },
-  customPrompt: { enabled: true, placement: 'replace-all', preserveSections: ['skills:'] },
+  customPrompt: { enabled: true, placement: 'replace-all', includeCliFacts: false },
   telemetry: { enabled: true, trackStreams: true }
 };
 const plugins: Plugin[] = [
@@ -68,7 +68,7 @@ const subConfigs: [
   { maxBatchFiles: 8 },
   { pythonCommand: 'python3', timeoutMs: 5000 },
   { softStepBudget: 6 },
-  { placement: 'replace-all', preserveSections: ['mcp:'] },
+  { placement: 'replace-all', includeCliFacts: true, extraEnvironmentFacts: ['- Custom fact'] },
   { trackStreams: true }
 ];
 

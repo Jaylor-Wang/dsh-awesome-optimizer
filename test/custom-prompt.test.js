@@ -250,8 +250,8 @@ test('detectPythonEnv safely detects and caches python or handles missing runtim
   resetPythonCacheForTesting();
 });
 
-test('customPrompt replace-all strips official prefixes while preserving host/plugin and preserveSections overrides', async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-custom-preserve-test-'));
+test('customPrompt replace-all strips all non-optimizer sections and honors includeCliFacts=false', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-custom-replace-strip-test-'));
   const globalFile = path.join(tempDir, 'SYSTEM.md');
   fs.writeFileSync(globalFile, 'CUSTOM_CORE_PROMPT', 'utf8');
 
@@ -262,7 +262,6 @@ test('customPrompt replace-all strips official prefixes while preserving host/pl
         globalFile,
         placement: 'replace-all',
         includeCliFacts: false,
-        preserveSections: ['mcp:'],
         hotReload: false
       }
     },
@@ -270,13 +269,13 @@ test('customPrompt replace-all strips official prefixes while preserving host/pl
       ctx.systemPrompt.section({
         name: 'skills:catalog',
         order: 500,
-        text: 'PRESERVED_SKILL_CATALOG',
+        text: 'STRIPPED_SKILL_CATALOG',
         interpolate: false
       });
       ctx.systemPrompt.section({
         name: 'mcp:servers',
         order: 510,
-        text: 'PRESERVED_MCP_SECTION',
+        text: 'STRIPPED_MCP_SECTION',
         interpolate: false
       });
       ctx.systemPrompt.section({
@@ -290,11 +289,12 @@ test('customPrompt replace-all strips official prefixes while preserving host/pl
   });
 
   try {
-    await host.run('Check preserveSections');
+    await host.run('Check replace-all full strip');
     const promptText = extractPromptText(host.requests[0]);
     assert.match(promptText, /CUSTOM_CORE_PROMPT/);
-    assert.match(promptText, /PRESERVED_SKILL_CATALOG/);
-    assert.match(promptText, /PRESERVED_MCP_SECTION/);
+    assert.match(promptText, /Work toward the user's completion criteria/);
+    assert.doesNotMatch(promptText, /STRIPPED_SKILL_CATALOG/);
+    assert.doesNotMatch(promptText, /STRIPPED_MCP_SECTION/);
     assert.doesNotMatch(promptText, /STRIPPED_TOOL_SECTION/);
     assert.doesNotMatch(promptText, /Standalone CLIs: playwright-cli/);
   } finally {

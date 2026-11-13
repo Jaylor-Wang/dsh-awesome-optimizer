@@ -10,20 +10,6 @@ export const SOURCE = 'optimizer-custom-prompt';
 export const SECTION_NAME = 'optimizer:custom-prompt';
 export const ENVIRONMENT_FACTS_SECTION = 'optimizer:environment-facts';
 export const DEFAULT_SECTION_ORDER = 10300;
-export const OFFICIAL_SECTION_PREFIXES = [
-  'harness:',
-  'deployment:',
-  'tool:',
-  'deliverable:',
-  'web:',
-  'plan:',
-  'team:',
-  'ptc:',
-  'file:',
-  'structured:',
-  'mcp:',
-  'tools:'
-];
 
 export const CustomPromptConfig = z.object({
   enabled: z.boolean().default(true),
@@ -37,9 +23,7 @@ export const CustomPromptConfig = z.object({
   interpolate: z.boolean().default(false),
   injectEnvironmentFacts: z.boolean().default(true),
   includeCliFacts: z.boolean().default(true),
-  extraEnvironmentFacts: z.array(z.string()).default([]),
-  preserveSections: z.array(z.string()).default([]),
-  stripAllNonOptimizer: z.boolean().default(false)
+  extraEnvironmentFacts: z.array(z.string()).default([])
 });
 let cachedPython = undefined;
 
@@ -348,21 +332,10 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
     if (!customText) return assembly;
 
     if (config.placement === 'replace-all') {
-      const preservedRules = Array.isArray(config.preserveSections) ? config.preserveSections : [];
-      const isExplicitlyPreserved = (sectionName) => preservedRules.some(rule => (
-        rule.endsWith(':') ? sectionName.startsWith(rule) : sectionName === rule
-      ));
-      const isOfficialSection = (sectionName) => OFFICIAL_SECTION_PREFIXES.some(prefix => sectionName.startsWith(prefix));
-      const isPreserved = (sectionName) => {
-        if (typeof sectionName !== 'string') return false;
-        if (sectionName === config.sectionName || sectionName === ENVIRONMENT_FACTS_SECTION) return false;
-        if (sectionName.startsWith('optimizer:')) return true;
-        if (isExplicitlyPreserved(sectionName)) return true;
-        if (config.stripAllNonOptimizer) return false;
-        return !isOfficialSection(sectionName);
-      };
-      // Retain optimizer's own sections, non-official host sections, and explicitly preserved sections while stripping verbose official sections
-      const preservedSections = assembly.sections.filter(s => isPreserved(s.name));
+      // Retain optimizer's own sections (e.g. convergence guidance) while stripping all other sections
+      const optimizerSections = assembly.sections.filter(
+        s => typeof s.name === 'string' && s.name.startsWith('optimizer:') && s.name !== config.sectionName && s.name !== ENVIRONMENT_FACTS_SECTION
+      );
       const sections = [
         {
           name: config.sectionName,
@@ -380,7 +353,7 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
           interpolate: false
         });
       }
-      sections.push(...preservedSections);
+      sections.push(...optimizerSections);
       return {
         ...assembly,
         sections
