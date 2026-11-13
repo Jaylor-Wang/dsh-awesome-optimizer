@@ -219,24 +219,24 @@ test('classifyToolCall classifies edit_batch, eval_python, and eval_node accurat
   assert.equal(en.byteLength, 3);
 });
 
-test('runtimePolicy isolates nested read_batch sub-calls and guards flagged inline scripts without false positives in quotes', async () => {
+test('runtimePolicy isolates nested find_and_read sub-calls and guards flagged inline scripts without false positives in quotes', async () => {
   const flaggedInline = `pwsh -NoProfile -Command "${'Write-Output 1; '.repeat(40)}"`;
   const safeCommit = 'git commit -m "docs: node -e \'x\' and cat << EOF and playwright-cli open file:///tmp/a.html"';
 
   const host = await createTestRuntime({
     files: {
-      'ok.txt': 'hello'
+      'ok.txt': 'hello target\nline2'
+    },
+    grepHandler() {
+      // Emit multiple non-existent paths to simulate failing nested read sub-calls
+      return 'Found 3 matches\n\nmissing1.txt\nLine 1: target\n\nmissing2.txt\nLine 1: target\n\nok.txt\nLine 1: hello target';
     },
     optimizerConfig: {
       runtimePolicy: { mode: 'enforce', noProgressLimit: 2, maxInlineScriptBytes: 512 }
     },
     script: [
-      [call('rb1', 'read_batch', {
-        files: [
-          { file_path: 'ok.txt' },
-          { file_path: 'missing1.txt' },
-          { file_path: 'missing2.txt' }
-        ]
+      [call('fr1', 'find_and_read', {
+        patterns: ['target']
       })],
       [call('b_inline', 'bash', { command: flaggedInline })],
       [call('b_commit', 'bash', { command: safeCommit })],

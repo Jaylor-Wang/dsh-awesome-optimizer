@@ -5,55 +5,22 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-72%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 High-performance runtime policy guards, persistent Python & Node evaluation daemons, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
 
-## Highlights in v2.2.0
+## Highlights in v3.0.0
 
-- **Persistent Eval Lifecycle & Cross-Platform Hardening**:
-  - `StdioWorkerRunner` now rejects pending startup/queued promises on spawn errors, early exits, and `destroy()` so worker startup failures never hang indefinitely.
-  - `DaemonPool` reuses `detectPythonEnv()` (`python` / `python3`) with optional `pythonCommand` override, and hooks `session/disposed` to prevent idle worker leaks.
-  - `node_worker.mjs` compiles synchronously first via `vm.Script` so `await` inside strings, comments, or `async` functions no longer shadows top-level state, and safely handles trailing comments in top-level `await` expressions.
-- **PTC Sub-Call Isolation & Guard Accuracy**:
-  - `runtimePolicy` now classifies `edit_batch`, `eval_python`, and `eval_node`, isolates nested `exec.parent !== undefined` sub-calls during parallel `read_batch`, catches flagged inline scripts (`pwsh -NoProfile -Command`, `python -u -c`), and avoids false positives inside quoted commit messages.
-  - `fileMutationPolicy` delegates `read_batch` observation to successful leaf `read` pipeline results; `failureRecovery` preserves pending `retry_failed_write` records across `eval_python` / `eval_node` calls.
-- **Custom Prompt Hot-Reload, Linter & Telemetry**:
-  - `customPrompt` retains clean `replace-all` full-section replacement (2.1.0 semantics), adds `includeCliFacts` and `extraEnvironmentFacts` toggles, fixes deferred `.dsh/` directory creation hot-reload (with case-insensitive Windows matching), and removes dead waterfall code.
-  - `telemetry` caches per-message SHA-256 digests (`WeakMap`) to eliminate `O(N²)` prefix-check serialization; `prompt-linter` preserves fenced code blocks in `fixPrompt`.
-
----
-
-## Highlights in v2.1.0
-
-- **Pre-warming Daemon**:
-  Hooks into `turn/start` lifecycle events to pre-spawn and handshake worker processes during model first-token inference, completely eliminating the 80ms cold-start spike down to **0.52ms (98.8% speedup)**.
-- **Eager Scope Ingestion**:
-  Standard algorithm libraries (`math`, `re`, `json`, `time`, `collections`, `itertools`) are eagerly pre-imported into global Python scope, eliminating repetitive `import` boilerplate and saving token generation time.
-- **Zero-Token-Waste Formatting**:
-  Ultra-compact single-line return format for pure expressions (`=> 42`), trimmed trailing newlines, and intelligent smoothing of IEEE-754 binary floating-point noise (`0.1 + 0.2` -> `=> 0.3`).
-- **Dynamic Ref/Unref & Cordis Lifecycle Cascading**:
-  Implements dynamic stream reference counting (`_ref` / `_unref`) so idle daemons never hold the Node.js event loop hostage while ensuring reliable teardown via Cordis `ctx.effect`.
-
----
-
-## Highlights in v2.0.0
-
-- **Persistent Python & Node Evaluation Daemons (`eval_python` / `eval_node`)**:
-  Zero-dependency stateful execution kernels over line-delimited stdio JSON frames. Retains global scopes, functions, imports, and variables across turns (with Node top-level `await`). Slashes repetitive calculation latency from 37ms to **0.61ms (98.5% speedup)**, eliminating temporary file pollution.
-- **Three Extreme Performance Dimensions**:
-  1. **Pre-warming Daemon**: Listens to session `turn/start` events to pre-spawn and handshake worker processes during model first-token generation, completely eliminating the 80ms cold-start spike.
-  2. **Eager Scope Ingestion**: Standard algorithm libraries (`math`, `re`, `json`, `time`, `collections`, `itertools`) are eagerly pre-imported into global Python scope, saving LLM token generation overhead.
-  3. **Zero-Token-Waste Formatting**: Ultra-compact single line return format for pure expressions (`=> 42`), trimmed trailing newlines, and intelligent smoothing of IEEE-754 binary floating-point noise (`0.30000000000000004` -> `0.3`) to accelerate LLM Prefill.
-- **Watchdog Timeout & Self-Healing Auto-Restart**:
-  Built-in execution watchdog forces termination of infinite loops (`while True:`) or blocked input across platforms without freezing the host process, automatically spinning up fresh instances for seamless queued recovery.
-- **Anti-Dumping Output Guard**:
-  Enforces configurable payload truncation (default 8KB) with disk-redirect guidance, directly reinforcing the `NEVER dump raw data into context` directive.
-- **Evaluation vs Engineering Code Separation**:
-  Formalizes prompt directives ensuring intermediate calculations leverage persistent in-memory kernels while deliverable production files are committed to disk via native filesystem operations.
+- **Precision Search-and-Slice (`find_and_read`, replacing `read_batch`)**:
+  - Removes `read_batch` (which overlapped with DSH native parallel `read` and encouraged speculative full-file reads) and replaces it with **`find_and_read`** over `ToolExecutionPipeline`.
+  - Runs 1–5 regex patterns in parallel through `grep`, deduplicates and ranks matched files by pattern coverage, merges overlapping `±contextLines` windows, and reads only targeted line slices within a strict `24KB` byte budget (overflowing extras to a compact `path:line` index).
+- **Zero-Schema Native `read` Protection & Blind-Read Tail Outline (`readGuard`)**:
+  - Hooks `tools/post-execute` on direct `read` calls to truncate oversized minified lines (`maxLineChars: 1500`) and automatically inject a bounded ≤20-line structural symbol outline of unread lines whenever a blind `read` hits truncation—zero extra tool schema overhead.
+- **Zero-Cost `edit` & `edit_batch` Context Recovery (`editRecovery`)**:
+  - Automatically attaches exact line-numbered nearby context on `edit` / `edit_batch` match failures (handling CRLF/indentation mismatches, multi-match line lists, rare-anchor alignment, and token-rarity fallback) while strictly skipping policy/sandbox/permission/`ENOENT` denials to avoid content leakage.
 
 ---
 
@@ -80,13 +47,12 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
 
 ### 2. PTC Native Composite Batch Tooling (`compositeTools`)
 
-- **`read_batch`**:
-  Concurrently inspects up to 10 targeted file snippets in a single turn. Ideal for broad multi-file investigation and dependency tracing.
+- **`find_and_read`**:
+  Searches 1–5 regex patterns in parallel via `grep`, merges adjacent line matches into contiguous windows, and fetches bounded code slices via `read` in a single round-trip (eliminating `grep -> LLM -> read` waits and whole-file bloat).
 - **`edit_batch`**:
-  Sequentially applies up to 10 targeted literal text replacements across single or multiple files in one round trip. Tolerates partial failures without losing preceding valid edits.
+  Sequentially applies up to 10 targeted literal text replacements across single or multiple files in one round trip, with pre-flight same-file simulation, `atomic` abort support, and automatic line-numbered recovery hints on mismatch.
 - **Inherited Security & Sandboxing**:
   Every sub-action is dispatched through the official `ToolExecutionPipeline` (`tool/ptc-dispatch-start` / `tool/ptc-dispatch`), preserving file policy locks, mutation guards, and audit hooks.
-
 ### 3. Defensive Runtime Policy & Self-Healing Recovery
 
 - **No-Progress Circuit Breaker (`NO_PROGRESS`)**:
@@ -189,13 +155,13 @@ You are a master autonomous software engineer powered by DeepSeek Harness.
 - Windows arguments & paths: use forward slashes in paths to prevent escape corruption. NEVER embed scripts or multiline code in shell arguments (`node -e`, `python -c`, `pwsh -Command`). Quote single-line patterns carefully (`ast-grep` patterns STRICTLY in single quotes `'...'` to prevent `$$` expansion). On quoting failures, switch input method rather than re-escaping.
 - Byte-fidelity: default new text files to UTF-8. Preserve existing file encodings, BOMs, line endings, `.gitattributes`, and hook policies unless explicitly requested.
 - Policy denials (`file access denied`, network blocked, approval disabled/rejected) are not command bugs: report; do not bypass. Request wider access via `sandbox_permissions` ONLY when escalation is explicitly available; otherwise do not retry or escalate. Diagnose ordinary lock, permission, or connectivity errors normally.
-- Tool exclusivity: STRICTLY native `glob`/`grep`/`read_batch`/`read`/`edit_batch`/`edit`/`write`. NEVER use shell commands or redirects for workspace search or reading/writing files (`grep`, `rg`, `find`, `ls`, `dir`, `cat`, `type`, `head`, `tail`, `sed`, `awk`, `tee`, `>`/`>>`). Filtering piped command output (`cmd | grep`) and batch removing temporary artifacts (`rm -rf`) are permitted.
+- Tool exclusivity: STRICTLY native `glob`/`grep`/`find_and_read`/`read`/`edit_batch`/`edit`/`write`. NEVER use shell commands or redirects for workspace search or reading/writing files (`grep`, `rg`, `find`, `ls`, `dir`, `cat`, `type`, `head`, `tail`, `sed`, `awk`, `tee`, `>`/`>>`). Filtering piped command output (`cmd | grep`) and batch removing temporary artifacts (`rm -rf`) are permitted.
 
 ### Execution & Context Efficiency
 
 - Workflow:
   - Complexity: simple → execute; high-scope (cross-module, API, schema) → generate / follow plan (`<name>.md`); define 1–3 sentence scope and exit criteria before edits.
-  - Scheduling: MUST use `read_batch` for multi-file inspection (2+ files); keep single-file reads, retries, and dependent checks sequential.
+  - Scheduling: Use `find_and_read` when searching code and inspecting surrounding lines together; batch independent `read` calls directly in parallel when exact files/ranges are known. Keep retries and dependent checks sequential.
   - Diagnosis: inspect contiguous context in one pass; cite locators and minimal raw excerpts only as evidence.
 - Search & navigation:
   - Scope & environment: verify via `git rev-parse --is-inside-work-tree` when workspace boundary is ambiguous (do not probe `.git`). Probe binary availability via `which`/`command -v` ONLY when execution fails.

@@ -9,7 +9,7 @@ export const RETRY_TOOL = 'retry_failed_write';
 export const PAIRING_ERROR = 'invalid escalation: justification is only valid together with sandbox_permissions';
 const MIN_BYTES = 8 * 1024;
 const MAX_BYTES = 1024 * 1024;
-const READ_ONLY = new Set(['read', 'read_image', 'read_batch', 'glob', 'grep', 'skill', 'eval_python', 'eval_node']);
+const READ_ONLY = new Set(['read', 'read_image', 'find_and_read', 'glob', 'grep', 'skill', 'eval_python', 'eval_node']);
 
 export const FailureRecoveryConfig = z.object({
   enabled: z.boolean().default(true),

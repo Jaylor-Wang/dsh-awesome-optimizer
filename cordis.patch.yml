@@ -16,11 +16,23 @@
           mode: observe
           minLargeWriteBytes: 8192
         recoverFailedWrites: true
+        editRecovery:
+          enabled: true
+          contextLines: 6
+          maxSnippetLines: 20
+        readGuard:
+          enabled: true
+          maxLineChars: 1500
+          injectTailOutline: true
+          maxOutlineEntries: 20
         compositeTools:
           enabled: true
-          readBatch: true
+          findAndRead: true
           editBatch: true
-          maxBatchFiles: 10
+          maxPatterns: 5
+          defaultContextLines: 5
+          maxFiles: 5
+          maxWindows: 10
           maxBatchEdits: 10
         convergence:
           enabled: true

@@ -2,6 +2,8 @@ import type { Context } from '@deepseek-ai/cordis';
 import type z from '@deepseek-ai/schemastery';
 import type { RuntimePolicyOptions } from './runtime-policy.d.ts';
 import type { FileMutationPolicyOptions } from './file-mutation-policy.d.ts';
+import type { EditRecoveryOptions } from './edit-recovery.d.ts';
+import type { ReadGuardOptions } from './read-guard.d.ts';
 import type { CompositeToolsOptions } from './composite-tools.d.ts';
 import type { PersistentEvalOptions, PersistentEvalService } from './persistent-eval/index.d.ts';
 import type { ConvergenceOptions } from './convergence.d.ts';
@@ -15,6 +17,8 @@ export interface AgentOptimizerConfig {
   fileMutationPolicy?: FileMutationPolicyOptions;
   mutationPolicy?: FileMutationPolicyOptions;
   recoverFailedWrites?: boolean;
+  editRecovery?: EditRecoveryOptions;
+  readGuard?: ReadGuardOptions;
   compositeTools?: CompositeToolsOptions;
   persistentEval?: PersistentEvalOptions;
   convergence?: ConvergenceOptions;
@@ -56,11 +60,39 @@ export {
   type FailureRecoveryService
 } from './failure-recovery.d.ts';
 export {
-  READ_BATCH_TOOL,
+  EditRecoveryConfig,
+  isEditMatchFailure,
+  findBestEditMatch,
+  buildEditFailureHint,
+  applyEditRecovery,
+  type EditRecoveryOptions,
+  type EditRecoveryStats,
+  type EditMatchLocation,
+  type EditMatchResult,
+  type EditRecoveryService
+} from './edit-recovery.d.ts';
+export {
+  READ_GUARD_SOURCE,
+  ReadGuardConfig,
+  truncateLongLines,
+  extractCodeOutline,
+  formatCodeOutline,
+  applyReadGuard,
+  type ReadGuardOptions,
+  type ReadGuardStats,
+  type ReadGuardService,
+  type OutlineEntry
+} from './read-guard.d.ts';
+export {
+  FIND_AND_READ_TOOL,
   EDIT_BATCH_TOOL,
+  parseGrepOutput,
+  mergeMatchWindows,
   type CompositeToolsOptions,
   type CompositeToolsStats,
-  type CompositeToolsService
+  type CompositeToolsService,
+  type ParsedGrepMatch,
+  type MergedMatchWindow
 } from './composite-tools.d.ts';
 export {
   SOURCE as CONVERGENCE_SOURCE,

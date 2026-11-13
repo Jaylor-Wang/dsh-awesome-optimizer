@@ -123,10 +123,9 @@ export function classifyToolCall(name, args = {}, cwd = '') {
   } else if (name === 'read' || name === 'read_image') {
     opClass = 'read';
     targetPath = typeof args.file_path === 'string' ? args.file_path : '';
-  } else if (name === 'read_batch') {
-    opClass = 'read';
-    const items = Array.isArray(args.files) ? args.files : [];
-    targetPath = items.map(item => (typeof item?.file_path === 'string' ? item.file_path : '')).filter(Boolean).join(',');
+  } else if (name === 'find_and_read') {
+    opClass = 'search';
+    targetPath = typeof args.path === 'string' ? args.path : '';
   } else if (name === 'glob' || name === 'grep') {
     opClass = 'search';
     targetPath = typeof args.path === 'string' ? args.path : '';

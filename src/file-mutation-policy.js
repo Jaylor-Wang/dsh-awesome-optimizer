@@ -204,8 +204,6 @@ export class FileMutationPolicyManager {
         state.observedFiles.add(filePath);
         state.knownExistingFiles.add(filePath);
       }
-    } else if (exec.name === 'read_batch' && exec.parent === undefined && Array.isArray(args.files)) {
-      // Leaf read sub-calls already record successful reads; only use batch fallback if called outside pipeline.
     } else if (['grep', 'glob'].includes(exec.name)) {
       if (typeof args.path === 'string') {
         state.observedFiles.add(normalizePath(args.path, state.cwd));

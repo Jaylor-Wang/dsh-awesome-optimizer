@@ -1,6 +1,6 @@
 {
   "name": "dsh-awesome-optimizer",
-  "version": "2.2.0",
+  "version": "3.0.0",
   "description": "Runtime policy guards, composite batch tooling, persistent Python & Node eval daemons, soft convergence guidance, reactive custom prompt engine, and A/B telemetry plugin for the official DeepSeek Harness (dsh) agent loop.",
   "type": "module",
   "main": "src/index.js",
@@ -21,6 +21,14 @@
     "./recovery": {
       "types": "./src/failure-recovery.d.ts",
       "default": "./src/failure-recovery.js"
+    },
+    "./edit-recovery": {
+      "types": "./src/edit-recovery.d.ts",
+      "default": "./src/edit-recovery.js"
+    },
+    "./read-guard": {
+      "types": "./src/read-guard.d.ts",
+      "default": "./src/read-guard.js"
     },
     "./composite-tools": {
       "types": "./src/composite-tools.d.ts",

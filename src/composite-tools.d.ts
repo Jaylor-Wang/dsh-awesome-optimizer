@@ -3,21 +3,23 @@ import type z from '@deepseek-ai/schemastery';
 
 export interface CompositeToolsOptions {
   enabled?: boolean;
-  readBatch?: boolean;
+  findAndRead?: boolean;
   editBatch?: boolean;
-  maxBatchFiles?: number;
+  maxPatterns?: number;
+  defaultContextLines?: number;
+  maxFiles?: number;
+  maxWindows?: number;
   maxBatchEdits?: number;
-  defaultLimitPerFile?: number;
   maxLineChars?: number;
   maxTotalBytes?: number;
   atomicEdits?: boolean;
 }
 
 export interface CompositeToolsStats {
-  batchesExecuted: number;
-  filesRequested: number;
-  filesSucceeded: number;
-  filesFailed: number;
+  findExecuted: number;
+  findPatternsSearched: number;
+  findWindowsRead: number;
+  findFilesMatched: number;
   editBatchesExecuted: number;
   editsRequested: number;
   editsSucceeded: number;
@@ -28,13 +30,23 @@ export interface CompositeToolsService {
   getStats(session: unknown): CompositeToolsStats;
 }
 
-export declare const READ_BATCH_TOOL: 'read_batch';
+export interface ParsedGrepMatch {
+  path: string;
+  lineNumber: number;
+  line: string;
+}
+
+export interface MergedMatchWindow {
+  start: number;
+  end: number;
+  matchedLines: number[];
+}
+
+export declare const FIND_AND_READ_TOOL: 'find_and_read';
 export declare const EDIT_BATCH_TOOL: 'edit_batch';
 export declare function truncateLongLines(text: string, maxLineChars?: number): string;
-export declare function renderReadBatchResults(
-  entries: Array<{ filePath: string; isError: boolean; text: string }>,
-  options?: { maxLineChars?: number; maxTotalBytes?: number }
-): string;
+export declare function parseGrepOutput(text: string, meta?: unknown): ParsedGrepMatch[];
+export declare function mergeMatchWindows(lineNumbers: number[], contextLines?: number, adjacentGap?: number): MergedMatchWindow[];
 export declare const CompositeToolsConfig: z<CompositeToolsOptions>;
 export declare function applyCompositeTools(ctx: Context, rawConfig?: CompositeToolsOptions): CompositeToolsService | null;
 export declare const name: string;

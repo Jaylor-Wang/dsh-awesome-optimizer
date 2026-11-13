@@ -5,55 +5,22 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-72%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、持久化 Python/Node 执行内核、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
 
-## v2.2.0 版本更新
+## v3.0.0 架构减法与精准定位升级
 
-- **持久化内核生命周期与跨平台加固**：
-  - `StdioWorkerRunner` 在启动失败、提前退出及 `destroy()` 时统一 reject 等待中的启动/排队 Promise，彻底消除进程启动失败挂起。
-  - `DaemonPool` 复用 `detectPythonEnv()` 自动适配 `python` / `python3`（并支持 `pythonCommand` 配置），同时监听 `session/disposed` 防止长会话进程泄漏。
-  - `node_worker.mjs` 改为优先 `vm.Script` 同步预编译，消除字符串/注释/`async` 函数内 `await` 误包 IIFE 导致顶层状态失效的问题，并修复顶层 `await` 末行带行尾注释时的语法报错。
-- **PTC 子调用隔离与策略护栏精度提升**：
-  - `runtimePolicy` 补齐 `edit_batch` / `eval_python` / `eval_node` 分类，隔离 `exec.parent !== undefined` 并发子调用避免 `read_batch` 竞态，支持拦截带中间参数的内联脚本（如 `pwsh -NoProfile -Command`、`python -u -c`），并去除引号内关键字误杀。
-  - `fileMutationPolicy` 由流水线内成功子 `read` 精确记录文件观察状态；`failureRecovery` 将 `eval_python` / `eval_node` 纳入非变更白名单，避免误作废 `retry_failed_write`。
-- **提示词热重载、Linter 与遥测性能优化**：
-  - `customPrompt` 的 `replace-all` 保持 2.1.0 纯粹全清接管语义，新增 `includeCliFacts` 与 `extraEnvironmentFacts` 配置项，支持 `.dsh/` 目录延迟创建及 Windows 大小写不敏感热重载，并清理死代码。
-  - `telemetry` 引入 `WeakMap` 消息摘要缓存将前缀比对由 `O(N²)` 降为 `O(N)`；`prompt-linter` 的 `fixPrompt` 跳过代码块并修正 `fixable` 标记。
-
----
-
-## v2.1.0 版本重大更新
-
-- **会话起手后台静默预热（Pre-warming Daemon）**：
-  监听 `turn/start` 生命周期事件，在模型思考与首字生成的窗口期并行完成子进程握手，消灭首次 80ms 冷启毛刺，单次执行延迟降低至 **0.52ms（相比冷启提速 98.8%）**。
-- **常用数学/算法标准库预载入（Eager Scope Ingestion）**：
-  静默向全局 Python 作用域预注入 `math, re, json, time, collections, itertools`，省去繁复 `import` 语句生成开销。
-- **极致紧凑输出（Zero-Token-Waste Formatting）**：
-  纯表达式极简单行输出（`=> 42`），剔除多余首尾换行，平滑 IEEE-754 浮点二进制噪声（`0.1 + 0.2` -> `=> 0.3`），杜绝无效 Token 占用 Prefill 窗口。
-- **动态引用计数与 Cordis 级联释放（Ref/Unref & Lifecycle Cascading）**：
-  基于 Node.js libuv 管道流的动态引用计数（`_ref` / `_unref`），确保在任务执行期间稳定守卫，任务完成后释放事件循环强引用，杜绝孤儿进程与退出超时挂起。
-
----
-
-## v2.0.0 版本重大里程碑更新
-
-- **持久化 Python 与 Node 执行内核 (`eval_python` / `eval_node`)**：
-  引入基于轻量级 stdio 行定界 JSON 协议帧的双语常驻守护引擎，**零外部依赖**（无需 `ipykernel`、`pyzmq` 等重型外部包）。在会话生命周期内跨调用保留全局变量、导入模块、类与函数，支持 Node 顶层 `await`。将算法、逆运动学与几何试算单次延迟从 37ms 直接压降至 **0.61ms（提速 98.5%）**，彻底终结多轮试算频繁向磁盘落盘临时脚本的损耗与文件污染。
-- **三大极致性能提速升级**：
-  1. **后台静默预热（Pre-warming Daemon）**：监听 `turn/start` 会话事件，在模型生成首个 Token 的思考间隙预先握手拉起子进程，消除首次 80ms 冷启尖刺；
-  2. **核心算法库预注入（Eager Scope Ingestion）**：默认在 Python 全局命名空间预载 `math, re, json, time, collections, itertools`，省去繁冗 `import` 代码，显著降低 LLM Token 消耗；
-  3. **输出极致紧凑压缩（Zero-Token-Waste Formatting）**：纯表达式求值单行紧凑返回（`=> 42`），剔除尾部多余换行，智能抹平 IEEE-754 二进制浮点噪声（如 `0.30000000000000004` -> `0.3`），为 LLM Prefill 阶段省出宝贵上下文。
-- **看门狗超时强杀与自愈热重启 (Watchdog & Self-Healing)**：
-  内置细粒度硬执行看门狗。当代码陷入死循环（如 `while True:`）或阻塞输入超时（默认 15s）后，主进程永不卡死挂起，跨平台强杀卡死子进程树并自动拉起新生干净实例，后续排队任务零感平滑恢复。
-- **上下文防冲爆守卫 (Anti-Dumping Interceptor)**：
-  在工具管道层对输出实施 8KB 阈值截断并追加引导落盘说明，与 `NEVER dump raw data into context` 规则深度协同，彻底杜绝超大输出冲爆 LLM 上下文。
-- **心智分流规约升维**：
-  在 `SYSTEM.md` 与 Custom Prompt 中确立“探索性解算/数据筛选优先走持久内核，工程交付物必须通过 native `write` 落盘”的最高指令分流契约。
+- **精准检索切片工具（`find_and_read`，正式剔除 `read_batch`）**：
+  - 彻底移除与 DSH 原生并行 `read` 重叠且易诱导盲读整文件的 `read_batch`，以基于 `ToolExecutionPipeline` 的 **`find_and_read`** 接管探索阶段。
+  - 单次支持 1~5 个正则并行 `grep` 检索，按模式覆盖度去重排序文件，自动合并相邻/重叠的 `±contextLines` 行区间再派发 `read` 切片，严格受 `24KB` 字节预算控制（超出部分降级为紧凑 `path:line` 索引）。
+- **原生 `read` 零工具位护栏与盲读尾部骨架（`readGuard`）**：
+  - 通过 `tools/post-execute` 无感保护所有原生 `read` 调用：截断超长压缩单行（`maxLineChars: 1500`），并在未指定 `offset/limit` 盲读大文件被截断时，于末尾自动附带剩余行（≤20 条）的轻量符号骨架，零额外 Tool Schema 开销。
+- **零成本 `edit` / `edit_batch` 匹配失败上下文自愈（`editRecovery`）**：
+  - 当 `edit` 或 `edit_batch` 因缩进/CRLF/局部过期导致匹配失败时，自动回显带精确行号的附近源码（支持多处命中行号清单、缩进差异诊断、稀有锚点与 Token 滑窗兜底），且严格跳过权限/沙箱/`NO_PROGRESS`/`ENOENT` 拦截以防止内容泄露。
 
 ---
 
@@ -80,13 +47,12 @@
 
 ### 2. PTC 原生复合批处理工具 (`compositeTools`)
 
-- **`read_batch`**：
-  支持单次并发读取最多 10 个指定文件的文本片段。大幅加速多模块依赖排查、跨文件上下文搜集任务。
+- **`find_and_read`**：
+  单次并行执行 1~5 条正则 `grep`，自动合并邻近命中行区间并精准切片 `read`，一跳替代 `grep → 等待 → read`，相比盲读整文件通常节省 80%+ 上下文 Token。
 - **`edit_batch`**：
-  支持单次顺序执行最多 10 处跨单个或多个文件的字面量精准文本替换。容忍局部错误而不影响同批次其他成功编辑，彻底避免多轮串行 `edit` 带来的网络空转。
+  支持单次顺序执行最多 10 处跨单个或多个文件的字面量精准文本替换，内置同文件内存预演校验、`atomic` 原子中止及匹配失败行号自愈提示。
 - **原生沙箱与安全事务继承**：
   所有子操作均通过官方 `ToolExecutionPipeline` (`tool/ptc-dispatch-start` / `tool/ptc-dispatch`) 分发，完整保留 DSH 沙箱权限判定、文件变更审核与观察策略钩子。
-
 ### 3. 运行期硬防护与失败自愈机制
 
 - **连续无进展失败熔断 (`NO_PROGRESS`)**：
@@ -189,13 +155,13 @@ You are a master autonomous software engineer powered by DeepSeek Harness.
 - Windows arguments & paths: use forward slashes in paths to prevent escape corruption. NEVER embed scripts or multiline code in shell arguments (`node -e`, `python -c`, `pwsh -Command`). Quote single-line patterns carefully (`ast-grep` patterns STRICTLY in single quotes `'...'` to prevent `$$` expansion). On quoting failures, switch input method rather than re-escaping.
 - Byte-fidelity: default new text files to UTF-8. Preserve existing file encodings, BOMs, line endings, `.gitattributes`, and hook policies unless explicitly requested.
 - Policy denials (`file access denied`, network blocked, approval disabled/rejected) are not command bugs: report; do not bypass. Request wider access via `sandbox_permissions` ONLY when escalation is explicitly available; otherwise do not retry or escalate. Diagnose ordinary lock, permission, or connectivity errors normally.
-- Tool exclusivity: STRICTLY native `glob`/`grep`/`read_batch`/`read`/`edit_batch`/`edit`/`write`. NEVER use shell commands or redirects for workspace search or reading/writing files (`grep`, `rg`, `find`, `ls`, `dir`, `cat`, `type`, `head`, `tail`, `sed`, `awk`, `tee`, `>`/`>>`). Filtering piped command output (`cmd | grep`) and batch removing temporary artifacts (`rm -rf`) are permitted.
+- Tool exclusivity: STRICTLY native `glob`/`grep`/`find_and_read`/`read`/`edit_batch`/`edit`/`write`. NEVER use shell commands or redirects for workspace search or reading/writing files (`grep`, `rg`, `find`, `ls`, `dir`, `cat`, `type`, `head`, `tail`, `sed`, `awk`, `tee`, `>`/`>>`). Filtering piped command output (`cmd | grep`) and batch removing temporary artifacts (`rm -rf`) are permitted.
 
 ### Execution & Context Efficiency
 
 - Workflow:
   - Complexity: simple → execute; high-scope (cross-module, API, schema) → generate / follow plan (`<name>.md`); define 1–3 sentence scope and exit criteria before edits.
-  - Scheduling: MUST use `read_batch` for multi-file inspection (2+ files); keep single-file reads, retries, and dependent checks sequential.
+  - Scheduling: Use `find_and_read` when searching code and inspecting surrounding lines together; batch independent `read` calls directly in parallel when exact files/ranges are known. Keep retries and dependent checks sequential.
   - Diagnosis: inspect contiguous context in one pass; cite locators and minimal raw excerpts only as evidence.
 - Search & navigation:
   - Scope & environment: verify via `git rev-parse --is-inside-work-tree` when workspace boundary is ambiguous (do not probe `.git`). Probe binary availability via `which`/`command -v` ONLY when execution fails.

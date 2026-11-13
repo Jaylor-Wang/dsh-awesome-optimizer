@@ -3,83 +3,147 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { mergeMatchWindows, parseGrepOutput } from '../src/index.js';
 import { createTestRuntime, call } from './support/runtime.js';
 
-test('read_batch reads multiple files in a single tool call through ToolExecutionPipeline', async () => {
+test('find_and_read searches multiple patterns, merges nearby windows, and observes read files in one round-trip', async () => {
+  const authLines = [
+    '// auth header',
+    ...Array.from({ length: 12 }, (_, i) => `const authPad${i} = ${i};`),
+    'export function verifyToken(token) {',
+    '  return token.startsWith("dsh_");',
+    '}',
+    'const afterVerify = 1;',
+    'export function refreshToken(token) {',
+    '  return verifyToken(token);',
+    '}',
+    ...Array.from({ length: 10 }, (_, i) => `const authTail${i} = ${i};`)
+  ];
+  const testLines = [
+    'import { verifyToken } from "./auth.js";',
+    ...Array.from({ length: 15 }, (_, i) => `const testPad${i} = ${i};`),
+    'assert.equal(verifyToken("dsh_1"), true);'
+  ];
+
   const host = await createTestRuntime({
     files: {
-      'src/a.js': 'export const a = 1;\nexport const a2 = 2;',
-      'src/b.js': 'export const b = 3;\nexport const b2 = 4;',
-      'src/c.js': 'export const c = 5;'
+      'src/auth.js': authLines.join('\n'),
+      'test/auth.test.js': testLines.join('\n')
     },
     script: [
-      [call('rb1', 'read_batch', {
-        files: [
-          { file_path: 'src/a.js' },
-          { file_path: 'src/b.js', offset: 2, limit: 1 },
-          { file_path: 'src/c.js' }
-        ]
+      [call('fr1', 'find_and_read', {
+        patterns: ['verifyToken', 'refreshToken'],
+        contextLines: 2
       })],
-      [{ type: 'text', text: 'All three files inspected in one round-trip.' }]
+      [{ type: 'text', text: 'Located both definitions and test call site.' }]
     ]
   });
 
   try {
-    await host.run('Inspect a.js, b.js, and c.js');
+    await host.run('Find verifyToken and refreshToken');
     assert.equal(host.errors.length, 0);
     assert.equal(host.requests.length, 2);
-    // Underlying native read tool was invoked 3 times via ToolExecutionPipeline
+
+    // 2 parallel grep calls + merged read calls
+    assert.equal(host.calls.filter(c => c.name === 'grep').length, 2);
+    // verifyToken (14, 19) and refreshToken (18) in auth.js overlap within contextLines=2 -> merged into 1 window!
+    // test/auth.test.js has lines 1 and 17 -> 2 windows. Total = 3 merged reads!
     assert.equal(host.calls.filter(c => c.name === 'read').length, 3);
-
-    const ptcEvents = host.events.filter(e => e.type === 'tool/ptc-dispatch');
-    assert.equal(ptcEvents.length, 3);
-
-    const stats = host.compositeTools.getStats(host.agent.session);
-    assert.equal(stats.batchesExecuted, 1);
-    assert.equal(stats.filesRequested, 3);
-    assert.equal(stats.filesSucceeded, 3);
-    assert.equal(stats.filesFailed, 0);
-
-    // FileMutationPolicy also observed the files read via read_batch
-    const mutationSummary = host.fileMutationPolicy.getSummary(host.agent.session);
-    assert.equal(mutationSummary.observedFiles, 3);
-  } finally {
-    await host.dispose();
-  }
-});
-
-test('read_batch tolerates partial missing files without losing valid reads in the same batch', async () => {
-  const host = await createTestRuntime({
-    files: {
-      'exists.txt': 'Valid file content'
-    },
-    script: [
-      [call('rb-partial', 'read_batch', {
-        files: [
-          { file_path: 'exists.txt' },
-          { file_path: 'missing.txt' }
-        ]
-      })],
-      [{ type: 'text', text: 'Handled partial batch result.' }]
-    ]
-  });
-
-  try {
-    await host.run('Read exists.txt and missing.txt');
-    assert.equal(host.errors.length, 0);
-    const stats = host.compositeTools.getStats(host.agent.session);
-    assert.equal(stats.filesSucceeded, 1);
-    assert.equal(stats.filesFailed, 1);
 
     const toolResults = host.events.filter(e => e.type === 'tool/result');
     assert.equal(toolResults.length, 1);
     assert.equal(toolResults[0].data.message.isError, false);
     const output = toolResults[0].data.message.content.map(b => b.text).join('\n');
-    assert.match(output, /Valid file content/);
-    assert.match(output, /\[ERROR\]/);
+    assert.match(output, /=== src\/auth\.js:12-21 ===/);
+    assert.match(output, /> 14: export function verifyToken/);
+    assert.match(output, /> 18: export function refreshToken/);
+
+    const stats = host.compositeTools.getStats(host.agent.session);
+    assert.equal(stats.findExecuted, 1);
+    assert.equal(stats.findPatternsSearched, 2);
+    assert.equal(stats.findFilesMatched, 2);
+    assert.equal(stats.findWindowsRead, 3);
+
+    // FileMutationPolicy recorded both files via leaf read pipeline calls
+    const mutationSummary = host.fileMutationPolicy.getSummary(host.agent.session);
+    assert.equal(mutationSummary.observedFiles, 2);
   } finally {
     await host.dispose();
   }
+});
+
+test('find_and_read enforces maxFiles/maxTotalBytes with overflow index and supports contextLines=0 & zero-match non-error', async () => {
+  const longLine = 'X'.repeat(400);
+  const host = await createTestRuntime({
+    optimizerConfig: {
+      compositeTools: {
+        enabled: true,
+        maxLineChars: 100,
+        maxTotalBytes: 512,
+        maxFiles: 2,
+        maxWindows: 4
+      }
+    },
+    files: {
+      'a.ts': `targetMatch ${longLine}`,
+      'b.ts': 'targetMatch in b\nline 2',
+      'c.ts': 'targetMatch in c\nline 2'
+    },
+    script: [
+      [call('fr-budget', 'find_and_read', { pattern: 'targetMatch', contextLines: 1 })],
+      [call('fr-index', 'find_and_read', { pattern: 'targetMatch', contextLines: 0 })],
+      [call('fr-none', 'find_and_read', { pattern: 'definitelyNotPresentAnywhere' })],
+      [{ type: 'text', text: 'Verified budget, index mode, and zero-match.' }]
+    ]
+  });
+
+  try {
+    await host.run('Check find_and_read modes');
+    const results = host.events.filter(e => e.type === 'tool/result');
+    assert.equal(results.length, 3);
+    assert.equal(results[0].data.message.isError, false);
+    assert.equal(results[1].data.message.isError, false);
+    assert.equal(results[2].data.message.isError, false);
+
+    const outBudget = results[0].data.message.content.map(b => b.text).join('\n');
+    assert.match(outBudget, /\[line truncated:/);
+    assert.match(outBudget, /--- Additional matches \(index only\) ---/);
+    assert.match(outBudget, /c\.ts: L1/);
+
+    const outIndex = results[1].data.message.content.map(b => b.text).join('\n');
+    assert.match(outIndex, /=== a\.ts \(1 matches\) ===/);
+    // contextLines=0 did not dispatch extra read calls
+    assert.equal(host.calls.filter(c => c.name === 'read').length, 2);
+
+    const outNone = results[2].data.message.content.map(b => b.text).join('\n');
+    assert.match(outNone, /No matches found for pattern\(s\): definitelyNotPresentAnywhere/);
+  } finally {
+    await host.dispose();
+  }
+});
+
+test('parseGrepOutput handles DSH grouped format, ripgrep Windows paths, and mergeMatchWindows merges adjacent lines', () => {
+  const grouped = [
+    'Found 2 matches',
+    '',
+    'src/policy.js',
+    'Line 10: export function check() {}',
+    'Line 14: return check();'
+  ].join('\n');
+  assert.deepEqual(parseGrepOutput(grouped), [
+    { path: 'src/policy.js', lineNumber: 10, line: 'export function check() {}' },
+    { path: 'src/policy.js', lineNumber: 14, line: 'return check();' }
+  ]);
+
+  const winFlat = 'C:\\repo\\src\\app.ts:42:const port = 3000;\n';
+  assert.deepEqual(parseGrepOutput(winFlat), [
+    { path: 'C:\\repo\\src\\app.ts', lineNumber: 42, line: 'const port = 3000;' }
+  ]);
+
+  assert.deepEqual(mergeMatchWindows([10, 14, 50], 3, 2), [
+    { start: 7, end: 17, matchedLines: [10, 14] },
+    { start: 47, end: 53, matchedLines: [50] }
+  ]);
 });
 
 test('edit_batch edits multiple files in a single tool call through ToolExecutionPipeline', async () => {
@@ -183,42 +247,37 @@ test('edit_batch tolerates partial failures without losing successful edits', as
   }
 });
 
-test('read_batch truncates oversized single lines and enforces maxTotalBytes budget', async () => {
-  const longLine = 'X'.repeat(500);
+test('find_and_read strips DSH <content> envelope when rendering slices', async () => {
   const host = await createTestRuntime({
-    optimizerConfig: {
-      compositeTools: {
-        enabled: true,
-        maxLineChars: 100,
-        maxTotalBytes: 600
-      }
-    },
     files: {
-      'minified.js': longLine,
-      'second.txt': 'line A\nline B\nline C\n'.repeat(15),
-      'third.txt': 'line D\nline E\n'.repeat(15)
+      'wrapped.ts': 'line 1\nconst needle = true;\nline 3'
+    },
+    readHandler(args) {
+      return [
+        `<path>${args.file_path}</path>`,
+        '<type>file</type>',
+        '<content>',
+        '1: line 1',
+        '2: const needle = true;',
+        '3: line 3',
+        '',
+        '(End of file - total 3 lines)',
+        '</content>'
+      ].join('\n');
     },
     script: [
-      [call('rb-budget', 'read_batch', {
-        files: [
-          { file_path: 'minified.js' },
-          { file_path: 'second.txt' },
-          { file_path: 'third.txt' }
-        ]
-      })],
-      [{ type: 'text', text: 'Budget verified.' }]
+      [call('fr-env', 'find_and_read', { pattern: 'needle', contextLines: 1 })],
+      [{ type: 'text', text: 'Stripped envelope cleanly.' }]
     ]
   });
 
   try {
-    await host.run('Test read_batch output budget');
-    const toolResults = host.events.filter(e => e.type === 'tool/result');
-    assert.equal(toolResults.length, 1);
-    const output = toolResults[0].data.message.content.map(b => b.text).join('\n');
-    assert.match(output, /\[line truncated: \+403 chars\]/);
-    assert.match(output, /=== \[TRUNCATED\] third\.txt ===/);
-    assert.match(output, /maxTotalBytes=600/);
-    assert.doesNotMatch(output, new RegExp('X'.repeat(200)));
+    await host.run('Strip envelope');
+    const results = host.events.filter(e => e.type === 'tool/result');
+    const output = results[0].data.message.content.map(b => b.text).join('\n');
+    assert.match(output, /> 2: const needle = true;/);
+    assert.doesNotMatch(output, /<content>/);
+    assert.doesNotMatch(output, /End of file/);
   } finally {
     await host.dispose();
   }

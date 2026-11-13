@@ -5,14 +5,25 @@ import { compareTurnSummaries, PAIRING_ERROR, StdioWorkerRunner } from '../src/i
 import { PY_WORKER_SCRIPT } from '../src/persistent-eval/daemon-pool.js';
 
 // Run deterministic A/B verification scenarios over the unchanged official @deepseek-ai/dsh-agent-loop.
-async function runBatchReadScenario() {
+async function runFindAndReadScenario() {
   const files = {
-    'a.txt': 'Alpha content line 1\nAlpha content line 2',
-    'b.txt': 'Beta content line 1\nBeta content line 2',
-    'c.txt': 'Gamma content line 1\nGamma content line 2'
+    'src/auth.ts': [
+      ...Array.from({ length: 20 }, (_, i) => `const padAuth${i} = ${i};`),
+      'export function verifyToken(token: string) {',
+      '  return token.startsWith("dsh_");',
+      '}',
+      ...Array.from({ length: 20 }, (_, i) => `const tailAuth${i} = ${i};`)
+    ].join('\n'),
+    'src/session.ts': [
+      ...Array.from({ length: 20 }, (_, i) => `const padSess${i} = ${i};`),
+      'export function openSession(token: string) {',
+      '  return verifyToken(token);',
+      '}',
+      ...Array.from({ length: 20 }, (_, i) => `const tailSess${i} = ${i};`)
+    ].join('\n')
   };
 
-  // Baseline: sequential single-file reads across 3 steps + final answer (4 model requests)
+  // Baseline: grep -> wait -> parallel reads -> final answer (3 model requests)
   const baselineHost = await createTestRuntime({
     optimizerEnabled: true,
     optimizerConfig: {
@@ -21,44 +32,40 @@ async function runBatchReadScenario() {
     },
     files,
     script: [
-      [call('r1', 'read', { file_path: 'a.txt' })],
-      [call('r2', 'read', { file_path: 'b.txt' })],
-      [call('r3', 'read', { file_path: 'c.txt' })],
-      [{ type: 'text', text: 'Synthesized alpha, beta, gamma.' }]
+      [call('g1', 'grep', { pattern: 'verifyToken' })],
+      [
+        call('r1', 'read', { file_path: 'src/auth.ts', offset: 18, limit: 10 }),
+        call('r2', 'read', { file_path: 'src/session.ts', offset: 18, limit: 10 })
+      ],
+      [{ type: 'text', text: 'Located verifyToken definition and caller.' }]
     ]
   });
 
-  // Candidate: read_batch collapses 3 file reads into 1 round-trip + final answer (2 model requests)
+  // Candidate: find_and_read collapses grep + merged context reads into 1 round-trip (2 model requests)
   const candidateHost = await createTestRuntime({
     optimizerEnabled: true,
     files,
     script: [
-      [call('rb1', 'read_batch', {
-        files: [
-          { file_path: 'a.txt' },
-          { file_path: 'b.txt' },
-          { file_path: 'c.txt' }
-        ]
-      })],
-      [{ type: 'text', text: 'Synthesized alpha, beta, gamma.' }]
+      [call('fr1', 'find_and_read', { pattern: 'verifyToken', contextLines: 4 })],
+      [{ type: 'text', text: 'Located verifyToken definition and caller.' }]
     ]
   });
 
   try {
-    await baselineHost.run('Read a.txt, b.txt, and c.txt and summarize.');
-    await candidateHost.run('Read a.txt, b.txt, and c.txt and summarize.');
+    await baselineHost.run('Find verifyToken definition and call sites.');
+    await candidateHost.run('Find verifyToken definition and call sites.');
 
     const baseSummary = baselineHost.telemetry.getSummary(baselineHost.agent.session);
     const candSummary = candidateHost.telemetry.getSummary(candidateHost.agent.session);
     const comparison = compareTurnSummaries(baseSummary, candSummary);
 
-    assert.equal(baseSummary.modelRequests, 4);
+    assert.equal(baseSummary.modelRequests, 3);
     assert.equal(candSummary.modelRequests, 2);
-    assert.equal(candSummary.ptcSubCalls, 3);
-    assert.equal(comparison.modelRequests.delta, -2);
+    assert.equal(candSummary.ptcSubCalls, 3); // 1 grep + 2 merged window reads
+    assert.equal(comparison.modelRequests.delta, -1);
 
     return {
-      scenario: 'multi-file-read-collapse',
+      scenario: 'find-and-read-collapse',
       baseline: baseSummary,
       candidate: candSummary,
       comparison
@@ -151,7 +158,7 @@ async function runPersistentEvalBenchmarkScenario() {
   };
 }
 
-const batchScenario = await runBatchReadScenario();
+const findScenario = await runFindAndReadScenario();
 const recoveryScenario = await runWriteRecoveryScenario();
 const persistentEvalScenario = await runPersistentEvalBenchmarkScenario();
 
@@ -160,5 +167,5 @@ console.log(JSON.stringify({
   officialLoopReplaced: false,
   networkRequests: 0,
   note: 'Offline scripted verification proves mechanism and telemetry fidelity. Run identical live tasks to evaluate model-specific round-trip reductions.',
-  scenarios: [batchScenario, recoveryScenario, persistentEvalScenario]
+  scenarios: [findScenario, recoveryScenario, persistentEvalScenario]
 }, null, 2));

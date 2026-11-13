@@ -90,6 +90,7 @@ export async function createTestRuntime({
   writeHandler,
   editHandler,
   bashHandler,
+  grepHandler,
   configureTools,
   workingDirectory,
   agentOptions
@@ -259,6 +260,49 @@ export async function createTestRuntime({
         return `[exit code: 0]\n${args.command}`;
       }
     });
+    ctx.tools.register({
+      name: 'grep',
+      description: 'Search file contents with a regular expression.',
+      parameters: {
+        type: 'object',
+        required: ['pattern'],
+        properties: {
+          pattern: { type: 'string' },
+          path: { type: 'string' },
+          include: { type: 'string' }
+        }
+      },
+      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+      isConcurrencySafe: () => true,
+      async execute(args, exec) {
+        owner.calls.push({ id: exec.callId, name: 'grep', args });
+        if (grepHandler) return grepHandler(args, exec, virtualFs);
+        const re = new RegExp(args.pattern);
+        const groups = [];
+        let total = 0;
+        for (const [filePath, raw] of virtualFs.entries()) {
+          if (args.path && !filePath.startsWith(args.path)) continue;
+          if (args.include) {
+            const extMatch = args.include.match(/^\*\.(\w+)$/);
+            if (extMatch && !filePath.endsWith(`.${extMatch[1]}`)) continue;
+          }
+          const hits = [];
+          const lines = raw.split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            if (re.test(lines[i])) {
+              hits.push(`Line ${i + 1}: ${lines[i]}`);
+              total++;
+            }
+          }
+          if (hits.length > 0) {
+            groups.push(`${filePath}\n${hits.join('\n')}`);
+          }
+        }
+        if (total === 0) return 'No matches found';
+        return `Found ${total} ${total === 1 ? 'match' : 'matches'}\n\n${groups.join('\n\n')}`;
+      }
+    });
+
 
     if (configureTools) await configureTools(ctx, owner);
 
@@ -276,6 +320,8 @@ export async function createTestRuntime({
     owner.fileMutationPolicy = ctx.get('fileMutationPolicy');
     owner.failureRecovery = ctx.get('failureRecovery');
     owner.compositeTools = ctx.get('compositeTools');
+    owner.readGuard = ctx.get('readGuard');
+    owner.editRecovery = ctx.get('editRecovery');
 
     const handle = await ctx.agents.create({
       sessionId: `optimizer-test-${randomUUID()}`,

@@ -2,7 +2,10 @@ import z from '@deepseek-ai/schemastery';
 import { applyRuntimePolicy, RuntimePolicyConfig, RuntimePolicyManager, POLICY_SOURCE } from './runtime-policy.js';
 import { applyFileMutationPolicy, FileMutationPolicyConfig, FileMutationPolicyManager, MUTATION_SOURCE } from './file-mutation-policy.js';
 import { applyFailureRecovery, RecoveryRecord, RECOVERY_SOURCE, RETRY_TOOL, PAIRING_ERROR } from './failure-recovery.js';
-import { applyCompositeTools, CompositeToolsConfig, READ_BATCH_TOOL, EDIT_BATCH_TOOL } from './composite-tools.js';
+import { applyEditRecovery, EditRecoveryConfig, isEditMatchFailure, findBestEditMatch, buildEditFailureHint } from './edit-recovery.js';
+import { applyCompositeTools, CompositeToolsConfig, FIND_AND_READ_TOOL, EDIT_BATCH_TOOL, parseGrepOutput, mergeMatchWindows } from './composite-tools.js';
+import { applyReadGuard, ReadGuardConfig, READ_GUARD_SOURCE, truncateLongLines } from './read-guard.js';
+import { extractCodeOutline, formatCodeOutline } from './code-outline.js';
 import { applyPersistentEval, PersistentEvalConfig, EVAL_PYTHON_TOOL, EVAL_NODE_TOOL, formatEvalOutput, StdioWorkerRunner, DaemonPool } from './persistent-eval/index.js';
 import { applyConvergence, ConvergenceConfig, SOURCE as CONVERGENCE_SOURCE, GUIDANCE, REMINDER } from './convergence.js';
 import { applyCustomPrompt, CustomPromptConfig, CustomPromptManager, SECTION_NAME as CUSTOM_PROMPT_SECTION, ENVIRONMENT_FACTS_SECTION, formatEnvironmentFacts, detectPythonEnv, resetPythonCacheForTesting } from './custom-prompt.js';
@@ -20,6 +23,8 @@ export const Config = z.object({
   fileMutationPolicy: FileMutationPolicyConfig.default({}),
   mutationPolicy: FileMutationPolicyConfig.default({}),
   recoverFailedWrites: z.boolean().default(true),
+  editRecovery: EditRecoveryConfig.default({}),
+  readGuard: ReadGuardConfig.default({}),
   compositeTools: CompositeToolsConfig.default({}),
   persistentEval: PersistentEvalConfig.default({}),
   convergence: ConvergenceConfig.default({}),
@@ -53,6 +58,14 @@ export function apply(ctx, raw = {}) {
     if (recoveryService) ctx.provide('failureRecovery', recoveryService);
   }
 
+  const editRecoveryConfig = raw.editRecovery ?? config.editRecovery ?? {};
+  const editRecoveryService = applyEditRecovery(ctx, editRecoveryConfig);
+  if (editRecoveryService) ctx.provide('editRecovery', editRecoveryService);
+
+  const readGuardConfig = raw.readGuard ?? config.readGuard ?? {};
+  const readGuardService = applyReadGuard(ctx, readGuardConfig);
+  if (readGuardService) ctx.provide('readGuard', readGuardService);
+
   const compositeConfig = raw.compositeTools ?? config.compositeTools ?? {};
   const compositeService = applyCompositeTools(ctx, compositeConfig);
   if (compositeService) ctx.provide('compositeTools', compositeService);
@@ -81,8 +94,16 @@ export {
   RecoveryRecord,
   AgentTelemetryManager,
   compareTurnSummaries,
-  READ_BATCH_TOOL,
+  FIND_AND_READ_TOOL,
   EDIT_BATCH_TOOL,
+  parseGrepOutput,
+  mergeMatchWindows,
+  truncateLongLines,
+  applyReadGuard,
+  ReadGuardConfig,
+  READ_GUARD_SOURCE,
+  extractCodeOutline,
+  formatCodeOutline,
   EVAL_PYTHON_TOOL,
   EVAL_NODE_TOOL,
   formatEvalOutput,
@@ -92,6 +113,11 @@ export {
   DaemonPool,
   RETRY_TOOL,
   PAIRING_ERROR,
+  applyEditRecovery,
+  EditRecoveryConfig,
+  isEditMatchFailure,
+  findBestEditMatch,
+  buildEditFailureHint,
   CONVERGENCE_SOURCE,
   RECOVERY_SOURCE,
   POLICY_SOURCE,
