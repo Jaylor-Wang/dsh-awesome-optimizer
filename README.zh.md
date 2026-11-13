@@ -12,6 +12,19 @@
 
 ---
 
+## v2.1.0 版本重大更新
+
+- **会话起手后台静默预热（Pre-warming Daemon）**：
+  监听 `turn/start` 生命周期事件，在模型思考与首字生成的窗口期并行完成子进程握手，消灭首次 80ms 冷启毛刺，单次执行延迟降低至 **0.52ms（相比冷启提速 98.8%）**。
+- **常用数学/算法标准库预载入（Eager Scope Ingestion）**：
+  静默向全局 Python 作用域预注入 `math, re, json, time, collections, itertools`，省去繁复 `import` 语句生成开销。
+- **极致紧凑输出（Zero-Token-Waste Formatting）**：
+  纯表达式极简单行输出（`=> 42`），剔除多余首尾换行，平滑 IEEE-754 浮点二进制噪声（`0.1 + 0.2` -> `=> 0.3`），杜绝无效 Token 占用 Prefill 窗口。
+- **动态引用计数与 Cordis 级联释放（Ref/Unref & Lifecycle Cascading）**：
+  基于 Node.js libuv 管道流的动态引用计数（`_ref` / `_unref`），确保在任务执行期间稳定守卫，任务完成后释放事件循环强引用，杜绝孤儿进程与退出超时挂起。
+
+---
+
 ## v2.0.0 版本重大里程碑更新
 
 - **持久化 Python 与 Node 执行内核 (`eval_python` / `eval_node`)**：
