@@ -11,7 +11,7 @@ import recoveryPlugin, { type FailureRecoveryOptions } from 'dsh-awesome-optimiz
 import compositePlugin, { type CompositeToolsOptions } from 'dsh-awesome-optimizer/composite-tools';
 import convergencePlugin, { type ConvergenceOptions } from 'dsh-awesome-optimizer/convergence';
 import customPromptPlugin, { type CustomPromptOptions } from 'dsh-awesome-optimizer/custom-prompt';
-import { applyPersistentEval, type PersistentEvalOptions } from 'dsh-awesome-optimizer/persistent-eval';
+import { applyPersistentEval, type PersistentEvalOptions, type StdioWorkerExecuteOptions } from 'dsh-awesome-optimizer/persistent-eval';
 import telemetryPlugin, { type TelemetryOptions } from 'dsh-awesome-optimizer/telemetry';
 const config: AgentOptimizerConfig = {
   enabled: true,
@@ -65,14 +65,22 @@ const subConfigs: [
   { mode: 'enforce', disallowChainedHeavyCommands: true },
   { mode: 'observe' },
   { enabled: true },
-  { maxBatchFiles: 8 },
+  { maxBatchFiles: 8, maxLineChars: 1500, maxTotalBytes: 32768, atomicEdits: true },
   { pythonCommand: 'python3', timeoutMs: 5000 },
   { softStepBudget: 6 },
   { placement: 'replace-all', includeCliFacts: true, extraEnvironmentFacts: ['- Custom fact'] },
   { trackStreams: true }
 ];
 
+const workerExecOptions: StdioWorkerExecuteOptions = {
+  action: 'eval',
+  reset: false,
+  timeoutMs: 1000,
+  signal: new AbortController().signal
+};
+
 void applyPersistentEval;
+void workerExecOptions;
 void config;
 void plugins;
 void convergenceNotice;

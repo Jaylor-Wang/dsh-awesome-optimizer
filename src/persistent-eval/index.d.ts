@@ -47,6 +47,7 @@ export interface StdioWorkerExecuteOptions {
   action?: 'eval' | 'ping' | 'reset';
   reset?: boolean;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface DaemonPoolConfig {

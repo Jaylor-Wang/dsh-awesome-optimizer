@@ -8,6 +8,9 @@ export interface CompositeToolsOptions {
   maxBatchFiles?: number;
   maxBatchEdits?: number;
   defaultLimitPerFile?: number;
+  maxLineChars?: number;
+  maxTotalBytes?: number;
+  atomicEdits?: boolean;
 }
 
 export interface CompositeToolsStats {
@@ -27,6 +30,11 @@ export interface CompositeToolsService {
 
 export declare const READ_BATCH_TOOL: 'read_batch';
 export declare const EDIT_BATCH_TOOL: 'edit_batch';
+export declare function truncateLongLines(text: string, maxLineChars?: number): string;
+export declare function renderReadBatchResults(
+  entries: Array<{ filePath: string; isError: boolean; text: string }>,
+  options?: { maxLineChars?: number; maxTotalBytes?: number }
+): string;
 export declare const CompositeToolsConfig: z<CompositeToolsOptions>;
 export declare function applyCompositeTools(ctx: Context, rawConfig?: CompositeToolsOptions): CompositeToolsService | null;
 export declare const name: string;

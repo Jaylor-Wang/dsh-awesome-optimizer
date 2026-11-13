@@ -1,6 +1,9 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import z from '@deepseek-ai/schemastery';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
 import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline';
+import { normalizePath } from './runtime-policy.js';
 
 export const READ_BATCH_TOOL = 'read_batch';
 export const EDIT_BATCH_TOOL = 'edit_batch';
@@ -11,8 +14,150 @@ export const CompositeToolsConfig = z.object({
   editBatch: z.boolean().default(true),
   maxBatchFiles: z.number().step(1).min(1).max(25).default(10),
   maxBatchEdits: z.number().step(1).min(1).max(25).default(10),
-  defaultLimitPerFile: z.number().step(1).min(1).max(2000).default(400)
+  defaultLimitPerFile: z.number().step(1).min(1).max(2000).default(400),
+  maxLineChars: z.number().step(1).min(100).max(50000).default(2000),
+  maxTotalBytes: z.number().step(1).min(512).max(1024 * 1024).default(65536),
+  atomicEdits: z.boolean().default(false)
 });
+
+export function truncateLongLines(text, maxLineChars = 2000) {
+  if (typeof text !== 'string' || !maxLineChars || maxLineChars <= 0) return text;
+  const lines = text.split('\n');
+  let modified = false;
+  const out = lines.map(line => {
+    if (line.length <= maxLineChars) return line;
+    modified = true;
+    return `${line.slice(0, maxLineChars)}... [line truncated: +${line.length - maxLineChars} chars]`;
+  });
+  return modified ? out.join('\n') : text;
+}
+
+function sliceUtf8ToBytes(text, maxBytes) {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+  let end = Math.min(text.length, maxBytes);
+  while (end > 0 && Buffer.byteLength(text.slice(0, end), 'utf8') > maxBytes) {
+    end = Math.floor(end * 0.9);
+  }
+  return text.slice(0, end);
+}
+
+export function renderReadBatchResults(entries, { maxLineChars = 2000, maxTotalBytes = 65536 } = {}) {
+  const blocks = [];
+  let usedBytes = 0;
+  let truncatedCount = 0;
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    const header = `=== [${entry.isError ? 'ERROR' : 'FILE'}] ${entry.filePath} ===\n`;
+    const body = entry.isError ? entry.text : truncateLongLines(entry.text, maxLineChars);
+    const fullBlock = `${header}${body}`;
+    const separatorBytes = i > 0 ? 2 : 0; // '\n\n'
+    const fullBytes = Buffer.byteLength(fullBlock, 'utf8');
+
+    if (usedBytes + separatorBytes + fullBytes <= maxTotalBytes) {
+      blocks.push(fullBlock);
+      usedBytes += separatorBytes + fullBytes;
+      continue;
+    }
+
+    if (blocks.length === 0) {
+      const suffix = `\n[Truncated at ${maxTotalBytes} bytes limit; read with narrower offset/limit]`;
+      const allowedBodyBytes = Math.max(64, maxTotalBytes - Buffer.byteLength(header, 'utf8') - Buffer.byteLength(suffix, 'utf8'));
+      const clipped = sliceUtf8ToBytes(body, allowedBodyBytes);
+      const firstBlock = `${header}${clipped}${suffix}`;
+      blocks.push(firstBlock);
+      usedBytes += Buffer.byteLength(firstBlock, 'utf8');
+      truncatedCount++;
+    } else {
+      const placeholder = `=== [TRUNCATED] ${entry.filePath} ===\n[Omitted to stay within read_batch maxTotalBytes (${maxTotalBytes} bytes); read separately with narrower offset/limit.]`;
+      blocks.push(placeholder);
+      usedBytes += separatorBytes + Buffer.byteLength(placeholder, 'utf8');
+      truncatedCount++;
+    }
+  }
+
+  const rendered = blocks.join('\n\n');
+  if (truncatedCount > 0) {
+    return `${rendered}\n\n[read_batch budget: truncated/omitted ${truncatedCount} of ${entries.length} entries to stay within maxTotalBytes=${maxTotalBytes}]`;
+  }
+  return rendered;
+}
+
+async function readFileForPreflight(filePath, cwd, fsService, signal) {
+  if (fsService) {
+    if (typeof fsService.readFile === 'function') {
+      try {
+        const content = await fsService.readFile(filePath, { cwd, signal, encoding: 'utf8' });
+        return typeof content === 'string' ? { ok: true, content } : null;
+      } catch (err) {
+        if (err?.code === 'ENOENT') return { ok: false, missing: true };
+        return null;
+      }
+    }
+    if (typeof fsService.readText === 'function') {
+      try {
+        const content = await fsService.readText(filePath, { cwd, signal });
+        return typeof content === 'string' ? { ok: true, content } : null;
+      } catch (err) {
+        if (err?.code === 'ENOENT') return { ok: false, missing: true };
+        return null;
+      }
+    }
+  }
+  try {
+    const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
+    const content = await fs.readFile(resolved, 'utf8');
+    return { ok: true, content };
+  } catch (err) {
+    // If a custom fsService is mounted without readFile/readText (e.g. virtual/remote FS),
+    // do not assume local ENOENT means missing — fall back to native edit pipeline.
+    if (!fsService && err?.code === 'ENOENT') return { ok: false, missing: true };
+    return null;
+  }
+}
+
+function countOccurrences(haystack, needle) {
+  if (!needle) return 0;
+  let count = 0;
+  let pos = haystack.indexOf(needle);
+  while (pos !== -1) {
+    count++;
+    pos = haystack.indexOf(needle, pos + needle.length);
+  }
+  return count;
+}
+
+function simulateEditsOnContent(initialContent, items) {
+  let simulated = initialContent;
+  for (const { index, item } of items) {
+    if (!item.old_string) {
+      return {
+        ok: false,
+        failedIndex: index,
+        reason: `Pre-flight failed at edit #${index + 1} (${item.file_path}): old_string must be non-empty.`
+      };
+    }
+    const matches = countOccurrences(simulated, item.old_string);
+    if (matches === 0) {
+      return {
+        ok: false,
+        failedIndex: index,
+        reason: `Pre-flight failed at edit #${index + 1} (${item.file_path}): old_string not found (no changes written to this file).`
+      };
+    }
+    if (!item.replace_all && matches > 1) {
+      return {
+        ok: false,
+        failedIndex: index,
+        reason: `Pre-flight failed at edit #${index + 1} (${item.file_path}): old_string matched ${matches} locations; set replace_all=true or provide more context.`
+      };
+    }
+    simulated = item.replace_all
+      ? simulated.split(item.old_string).join(item.new_string)
+      : simulated.replace(item.old_string, item.new_string);
+  }
+  return { ok: true };
+}
 
 /**
  * Register safe composite tools that collapse predictable multi-step operations
@@ -200,9 +345,14 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
         }));
 
         const allFailed = subResults.every(entry => entry.isError);
-        const rendered = subResults
-          .map(entry => `=== [${entry.isError ? 'ERROR' : 'FILE'}] ${entry.filePath} ===\n${entry.text}`)
-          .join('\n\n');
+        const rendered = allFailed
+          ? subResults
+              .map(entry => `=== [ERROR] ${entry.filePath} ===\n${entry.text}`)
+              .join('\n\n')
+          : renderReadBatchResults(subResults, {
+              maxLineChars: config.maxLineChars,
+              maxTotalBytes: config.maxTotalBytes
+            });
 
         if (allFailed) {
           throw new HarnessError(rendered, 'READ_BATCH_ALL_FAILED');
@@ -225,6 +375,10 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
         additionalProperties: false,
         required: ['edits'],
         properties: {
+          atomic: {
+            type: 'boolean',
+            description: `When true, pre-flight validate all edits and abort without writing if any edit fails. Defaults to ${config.atomicEdits}.`
+          },
           edits: {
             type: 'array',
             minItems: 1,
@@ -282,6 +436,7 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
           );
         }
 
+        const isAtomic = typeof args?.atomic === 'boolean' ? args.atomic : config.atomicEdits;
         const session = exec.agent?.session;
         const state = stateFor(session);
         if (state) {
@@ -289,16 +444,96 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
           state.editsRequested += edits.length;
         }
 
+        const fsService = ctx.get ? ctx.get('fs') : undefined;
+        const cwdService = ctx.get ? ctx.get('workingDirectory') : undefined;
+        const cwd = cwdService?.get?.(session) ?? '';
+
+        // Group valid edits by normalized target path for same-file / atomic pre-flight checks
+        const editsByPath = new Map();
+        const preflightBlockedPaths = new Map();
+        const invalidEntries = new Map();
+
+        for (let index = 0; index < edits.length; index++) {
+          const item = edits[index];
+          if (!item || typeof item.file_path !== 'string' || !item.file_path.trim() || typeof item.old_string !== 'string' || typeof item.new_string !== 'string') {
+            invalidEntries.set(index, 'Invalid edit entry: file_path, old_string, and new_string must be strings.');
+            continue;
+          }
+          const pathKey = normalizePath(item.file_path, cwd) || item.file_path.trim();
+          if (!editsByPath.has(pathKey)) editsByPath.set(pathKey, []);
+          editsByPath.get(pathKey).push({ index, item });
+        }
+
+        for (const [pathKey, group] of editsByPath.entries()) {
+          // Pre-flight simulate whenever atomic=true or multiple sequential edits target the same file
+          const shouldPreflight = isAtomic || group.length > 1;
+          if (!shouldPreflight) continue;
+          // If any item requests sandbox escalation, let the pipeline handle permissions directly
+          if (group.some(({ item }) => typeof item.sandbox_permissions === 'string')) continue;
+
+          const probe = await readFileForPreflight(group[0].item.file_path, cwd, fsService, exec.signal);
+          if (!probe) continue;
+          if (!probe.ok && probe.missing) {
+            preflightBlockedPaths.set(
+              pathKey,
+              `Pre-flight failed (${group[0].item.file_path}): target file does not exist (no changes written).`
+            );
+            continue;
+          }
+          if (probe.ok) {
+            const sim = simulateEditsOnContent(probe.content, group);
+            if (!sim.ok) {
+              preflightBlockedPaths.set(pathKey, sim.reason);
+            }
+          }
+        }
+
+        if (isAtomic && (invalidEntries.size > 0 || preflightBlockedPaths.size > 0)) {
+          if (state) state.editsFailed += edits.length;
+          const reasons = [];
+          for (const [index, msg] of invalidEntries.entries()) {
+            reasons.push(`=== [ERROR] ${String(edits[index]?.file_path ?? `<invalid-${index}>`)} ===\n[ERROR] ${msg}`);
+          }
+          for (const [, reason] of preflightBlockedPaths.entries()) {
+            reasons.push(`=== [ERROR] Pre-flight ===\n[ERROR] ${reason}`);
+          }
+          throw new HarnessError(
+            `${reasons.join('\n\n')}\n\n[Atomic edit_batch aborted before any file was modified.]`,
+            'EDIT_BATCH_PREFLIGHT_FAILED'
+          );
+        }
+        const failedPaths = new Set(preflightBlockedPaths.keys());
         const subResults = [];
         for (let index = 0; index < edits.length; index++) {
           exec.signal.throwIfAborted();
           const item = edits[index];
-          if (!item || typeof item.file_path !== 'string' || !item.file_path.trim() || typeof item.old_string !== 'string' || typeof item.new_string !== 'string') {
+          if (invalidEntries.has(index)) {
             if (state) state.editsFailed++;
             subResults.push({
               filePath: String(item?.file_path ?? `<invalid-${index}>`),
               isError: true,
-              text: 'Invalid edit entry: file_path, old_string, and new_string must be strings.'
+              text: `[ERROR] ${invalidEntries.get(index)}`
+            });
+            continue;
+          }
+
+          const pathKey = normalizePath(item.file_path, cwd) || item.file_path.trim();
+          if (preflightBlockedPaths.has(pathKey)) {
+            if (state) state.editsFailed++;
+            subResults.push({
+              filePath: item.file_path,
+              isError: true,
+              text: `[ERROR] ${preflightBlockedPaths.get(pathKey)}`
+            });
+            continue;
+          }
+
+          if (failedPaths.has(pathKey)) {
+            if (state) state.editsFailed++;
+            subResults.push({
+              filePath: item.file_path,
+              isError: true,
+              text: `[ERROR] Skipped edit #${index + 1} after an earlier failure on ${item.file_path} to prevent partial corruption.`
             });
             continue;
           }
@@ -353,6 +588,7 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
 
           if (result.isError) {
             if (state) state.editsFailed++;
+            failedPaths.add(pathKey);
             const msg = result.error?.message
               ?? result.content?.filter(b => b.type === 'text').map(b => b.text).join('\n')
               ?? 'Edit failed';

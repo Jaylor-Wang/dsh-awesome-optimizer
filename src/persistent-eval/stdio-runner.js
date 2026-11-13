@@ -1,10 +1,21 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import process from 'node:process';
+/**
+ * Convert an aborted signal's reason into an Error suitable for rejection
+ * and DSH cancellation classification.
+ */
+function toAbortError(signal) {
+  const reason = signal?.reason;
+  if (reason instanceof Error) return reason;
+  const err = new Error(typeof reason === 'string' && reason ? reason : 'The operation was aborted.');
+  err.name = 'AbortError';
+  return err;
+}
 
 /**
  * Manages a single stateful worker process with stdio line-delimited JSON RPC,
- * watchdog timeout self-healing, and output anti-dumping guard.
+ * watchdog timeout self-healing, cancellation propagation, and output anti-dumping guard.
  */
 export class StdioWorkerRunner {
   /**
@@ -88,33 +99,41 @@ export class StdioWorkerRunner {
           ...this.env
         };
 
-        this.child = spawn(this.command, this.args, {
+        const child = spawn(this.command, this.args, {
           stdio: ['pipe', 'pipe', 'pipe'],
           env: mergedEnv,
           windowsHide: true
         });
+        this.child = child;
 
         this._ref();
 
-        this.rl = readline.createInterface({
-          input: this.child.stdout,
+        const rl = readline.createInterface({
+          input: child.stdout,
           terminal: false
         });
+        this.rl = rl;
 
-        this.rl.on('line', line => this._handleStdoutLine(line));
+        rl.on('line', line => {
+          if (this.child !== child) return;
+          this._handleStdoutLine(line);
+        });
 
-        this.child.stderr.on('data', chunk => {
+        child.stderr.on('data', chunk => {
+          if (this.child !== child) return;
           // Worker-level unhandled stderr logging (not during task execution)
           if (this.currentTask) {
             this.currentTask.stderrChunk = (this.currentTask.stderrChunk || '') + chunk.toString('utf-8');
           }
         });
 
-        this.child.on('error', err => {
+        child.on('error', err => {
+          if (this.child !== child) return;
           this._handleProcessFailure(err);
         });
 
-        this.child.on('exit', (code, signal) => {
+        child.on('exit', (code, signal) => {
+          if (this.child !== child) return;
           this._handleProcessExit(code, signal);
         });
       } catch (err) {
@@ -149,10 +168,21 @@ export class StdioWorkerRunner {
     if (this.currentTask && parsed.id === this.currentTask.id) {
       const task = this.currentTask;
       this.currentTask = null;
-      if (task.timeoutTimer) clearTimeout(task.timeoutTimer);
+      this._cleanupTask(task);
 
       this._truncateAndResolve(task, parsed);
       this._drainQueue();
+    }
+  }
+
+  _cleanupTask(task) {
+    if (task.timeoutTimer) {
+      clearTimeout(task.timeoutTimer);
+      task.timeoutTimer = null;
+    }
+    if (task.abortCleanup) {
+      task.abortCleanup();
+      task.abortCleanup = null;
     }
   }
 
@@ -184,7 +214,7 @@ export class StdioWorkerRunner {
     if (this.currentTask) {
       const task = this.currentTask;
       this.currentTask = null;
-      if (task.timeoutTimer) clearTimeout(task.timeoutTimer);
+      this._cleanupTask(task);
       task.reject(err);
     }
     this._drainQueue();
@@ -208,7 +238,7 @@ export class StdioWorkerRunner {
     if (this.currentTask) {
       const task = this.currentTask;
       this.currentTask = null;
-      if (task.timeoutTimer) clearTimeout(task.timeoutTimer);
+      this._cleanupTask(task);
 
       task.resolve({
         id: task.id,
@@ -225,12 +255,86 @@ export class StdioWorkerRunner {
     this._drainQueue();
   }
 
+  _ensureStartedWithSignal(signal) {
+    if (signal?.aborted) {
+      return Promise.reject(toAbortError(signal));
+    }
+    const startPromise = this.ensureStarted();
+    if (!signal) return startPromise;
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        reject(toAbortError(signal));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      startPromise.then(
+        () => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        },
+        err => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener('abort', onAbort);
+          reject(err);
+        }
+      );
+    });
+  }
+
+  _abortTask(task, signal) {
+    if (task.settled) return;
+    const abortErr = toAbortError(signal);
+    this._cleanupTask(task);
+
+    if (this.currentTask === task) {
+      this.currentTask = null;
+      // Detach and terminate the active child process immediately so subsequent tasks get a clean worker
+      const dyingChild = this.child;
+      this.isReady = false;
+      this.child = null;
+      if (this.rl) {
+        try { this.rl.close(); } catch {}
+        this.rl = null;
+      }
+      this._forceKill(dyingChild);
+      task.reject(abortErr);
+      this._drainQueue();
+      return;
+    }
+
+    const queueIdx = this.pendingQueue.indexOf(task);
+    if (queueIdx >= 0) {
+      this.pendingQueue.splice(queueIdx, 1);
+      task.reject(abortErr);
+      if (!this.currentTask && this.pendingQueue.length === 0) {
+        this._unref();
+      }
+    }
+  }
+
   async execute(code, options = {}) {
     if (this.isDestroyed) {
       throw new Error('Worker runner has been destroyed.');
     }
+    const signal = options.signal;
+    if (signal?.aborted) {
+      throw toAbortError(signal);
+    }
 
-    await this.ensureStarted();
+    await this._ensureStartedWithSignal(signal);
+    if (this.isDestroyed) {
+      throw new Error('Worker runner has been destroyed.');
+    }
+    if (signal?.aborted) {
+      throw toAbortError(signal);
+    }
 
     const id = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const payload = {
@@ -241,7 +345,34 @@ export class StdioWorkerRunner {
     };
 
     return new Promise((resolve, reject) => {
-      this.pendingQueue.push({ id, payload, resolve, reject, options });
+      const task = {
+        id,
+        payload,
+        resolve: val => {
+          if (task.settled) return;
+          task.settled = true;
+          this._cleanupTask(task);
+          resolve(val);
+        },
+        reject: err => {
+          if (task.settled) return;
+          task.settled = true;
+          this._cleanupTask(task);
+          reject(err);
+        },
+        options,
+        settled: false,
+        timeoutTimer: null,
+        abortCleanup: null
+      };
+
+      if (signal) {
+        const onAbort = () => this._abortTask(task, signal);
+        signal.addEventListener('abort', onAbort, { once: true });
+        task.abortCleanup = () => signal.removeEventListener('abort', onAbort);
+      }
+
+      this.pendingQueue.push(task);
       if (!this.currentTask) {
         this._drainQueue();
       }
@@ -280,6 +411,11 @@ export class StdioWorkerRunner {
     }
 
     const task = this.pendingQueue.shift();
+    if (task.options?.signal?.aborted) {
+      task.reject(toAbortError(task.options.signal));
+      this._drainQueue();
+      return;
+    }
     this.currentTask = task;
 
     // Armed watchdog timer
@@ -293,26 +429,26 @@ export class StdioWorkerRunner {
       const line = JSON.stringify(task.payload) + '\n';
       this.child.stdin.write(line, 'utf-8');
     } catch (err) {
-      if (task.timeoutTimer) clearTimeout(task.timeoutTimer);
       this.currentTask = null;
+      this._cleanupTask(task);
       task.reject(err);
       this._drainQueue();
     }
   }
 
-  _forceKill() {
-    if (!this.child) return;
-    const pid = this.child.pid;
+  _forceKill(targetChild = this.child) {
+    if (!targetChild) return;
+    const pid = targetChild.pid;
     try {
       if (process.platform === 'win32' && pid) {
         // Force terminate process tree on Windows to prevent orphan python processes
         spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
       } else {
-        this.child.kill('SIGKILL');
+        targetChild.kill('SIGKILL');
       }
     } catch {
       try {
-        this.child.kill('SIGKILL');
+        targetChild.kill('SIGKILL');
       } catch {
         // Ignored
       }
@@ -324,22 +460,23 @@ export class StdioWorkerRunner {
     this.isReady = false;
     const destroyErr = new Error('Worker runner has been destroyed.');
     if (this.currentTask) {
-      if (this.currentTask.timeoutTimer) {
-        clearTimeout(this.currentTask.timeoutTimer);
-      }
-      this.currentTask.reject(destroyErr);
+      const task = this.currentTask;
       this.currentTask = null;
+      this._cleanupTask(task);
+      task.reject(destroyErr);
     }
     this._rejectReadyWaiters(destroyErr);
     const pending = this.pendingQueue.splice(0, this.pendingQueue.length);
     for (const task of pending) {
+      this._cleanupTask(task);
       task.reject(destroyErr);
     }
     if (this.rl) {
       try { this.rl.close(); } catch {}
       this.rl = null;
     }
-    this._forceKill();
+    const activeChild = this.child;
     this.child = null;
+    this._forceKill(activeChild);
   }
 }

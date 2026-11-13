@@ -1,6 +1,7 @@
 import { test, describe, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyPersistentEval, EVAL_PYTHON_TOOL, EVAL_NODE_TOOL, formatEvalOutput, StdioWorkerRunner } from '../src/persistent-eval/index.js';
+import { createTestRuntime, call } from './support/runtime.js';
 function createMockContext() {
   const registeredTools = new Map();
   const eventListeners = new Map();
@@ -267,5 +268,122 @@ fetched + globalThis.offset;
 
     ctx.emit('session/disposed', session);
     assert.equal(nodeRunner.isDestroyed, true);
+  });
+
+  test('official dsh-agent-loop hits prewarmed session worker via exec.agent.session and isolates sessions', async () => {
+    const hostA = await createTestRuntime({
+      optimizerConfig: {
+        persistentEval: { enabled: true, python: true, node: true }
+      },
+      script: [
+        [
+          call('c1', 'eval_python', { code: 'secret_val = 777' }),
+          call('c2', 'eval_node', { code: 'globalThis.nodeTag = "session-A"' })
+        ],
+        [
+          call('c3', 'eval_python', { code: 'secret_val' }),
+          call('c4', 'eval_node', { code: 'globalThis.nodeTag' })
+        ],
+        [{ type: 'text', text: 'Done A' }]
+      ]
+    });
+
+    const hostB = await createTestRuntime({
+      optimizerConfig: {
+        persistentEval: { enabled: true, python: true, node: true }
+      },
+      script: [
+        [
+          call('b1', 'eval_python', { code: '"secret_val" in globals()' }),
+          call('b2', 'eval_node', { code: 'typeof globalThis.nodeTag' })
+        ],
+        [{ type: 'text', text: 'Done B' }]
+      ]
+    });
+
+    try {
+      await hostA.run('Session A persistent eval');
+      const evalA = hostA.ctx.get('persistentEval');
+      assert.equal(evalA.pool.runnersBySession.has('__global__'), false);
+      assert.equal(evalA.pool.runnersBySession.has(hostA.agent.session.id), true);
+      assert.equal(evalA.pool.getPythonRunner(hostA.agent.session).launchCount, 1);
+      assert.equal(evalA.pool.getNodeRunner(hostA.agent.session).launchCount, 1);
+
+      const resultsA = hostA.events.filter(e => e.type === 'tool/result').map(e => e.data.message.content[0].text);
+      assert.equal(resultsA[2], '=> 777');
+      assert.equal(resultsA[3], "=> 'session-A'");
+
+      await hostB.run('Session B isolated');
+      const resultsB = hostB.events.filter(e => e.type === 'tool/result').map(e => e.data.message.content[0].text);
+      assert.equal(resultsB[0], '=> False');
+      assert.equal(resultsB[1], "=> 'undefined'");
+    } finally {
+      await hostA.dispose();
+      await hostB.dispose();
+    }
+  });
+
+  test('AbortSignal immediately cancels in-flight eval_python without waiting for watchdog timeout and recovers cleanly', async () => {
+    const { ctx, registeredTools } = createMockContext();
+    serviceInstance = applyPersistentEval(ctx, {
+      enabled: true,
+      timeoutMs: 10000
+    });
+    const pyTool = registeredTools.get(EVAL_PYTHON_TOOL);
+    const mockSession = { id: 'sess-abort-inflight' };
+    await serviceInstance.prewarm(mockSession);
+
+    const ac = new AbortController();
+    const started = performance.now();
+    setTimeout(() => ac.abort(new Error('User cancelled')), 120);
+
+    await assert.rejects(
+      () => pyTool.execute({ code: 'while True: pass' }, { agent: { session: mockSession }, signal: ac.signal }),
+      /User cancelled/
+    );
+    const elapsedMs = performance.now() - started;
+    assert.ok(elapsedMs < 3000, `Expected prompt abort under 3000ms, got ${elapsedMs.toFixed(1)}ms`);
+
+    // Clean recovery on next execution in the same session
+    const recovered = await pyTool.execute({ code: '21 * 2' }, { agent: { session: mockSession } });
+    assert.equal(recovered.trim(), '=> 42');
+  });
+
+  test('AbortSignal cancels queued and starting tasks without killing healthy active task', async () => {
+    const { ctx, registeredTools } = createMockContext();
+    serviceInstance = applyPersistentEval(ctx, { enabled: true, timeoutMs: 5000 });
+    const pyTool = registeredTools.get(EVAL_PYTHON_TOOL);
+    const mockSession = { id: 'sess-abort-queue' };
+    await serviceInstance.prewarm(mockSession);
+
+    const activePromise = pyTool.execute(
+      { code: 'import time; time.sleep(0.15); "active-ok"' },
+      { agent: { session: mockSession } }
+    );
+
+    const queuedAc = new AbortController();
+    const queuedPromise = pyTool.execute(
+      { code: '"should-not-run"' },
+      { agent: { session: mockSession }, signal: queuedAc.signal }
+    );
+    // Wait until queuedPromise enters pendingQueue behind activePromise
+    await new Promise(r => setTimeout(r, 20));
+    queuedAc.abort(new Error('Queued abort'));
+    await assert.rejects(() => queuedPromise, /Queued abort/);
+    const activeResult = await activePromise;
+    assert.equal(activeResult.trim(), "=> 'active-ok'");
+
+    // Also abort during startup wait
+    const slowRunner = new StdioWorkerRunner({
+      command: 'node',
+      args: ['-e', 'setTimeout(() => {}, 5000)']
+    });
+    const startAc = new AbortController();
+    setTimeout(() => startAc.abort(new Error('Startup abort')), 60);
+    await assert.rejects(
+      () => slowRunner.execute('1 + 1', { signal: startAc.signal }),
+      /Startup abort/
+    );
+    slowRunner.destroy();
   });
 });

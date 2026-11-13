@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { createTestRuntime, call } from './support/runtime.js';
 
@@ -175,6 +178,163 @@ test('edit_batch tolerates partial failures without losing successful edits', as
     const output = toolResults[0].data.message.content.map(b => b.text).join('\n');
     assert.match(output, /Edited valid\.txt/);
     assert.match(output, /\[ERROR\]/);
+  } finally {
+    await host.dispose();
+  }
+});
+
+test('read_batch truncates oversized single lines and enforces maxTotalBytes budget', async () => {
+  const longLine = 'X'.repeat(500);
+  const host = await createTestRuntime({
+    optimizerConfig: {
+      compositeTools: {
+        enabled: true,
+        maxLineChars: 100,
+        maxTotalBytes: 600
+      }
+    },
+    files: {
+      'minified.js': longLine,
+      'second.txt': 'line A\nline B\nline C\n'.repeat(15),
+      'third.txt': 'line D\nline E\n'.repeat(15)
+    },
+    script: [
+      [call('rb-budget', 'read_batch', {
+        files: [
+          { file_path: 'minified.js' },
+          { file_path: 'second.txt' },
+          { file_path: 'third.txt' }
+        ]
+      })],
+      [{ type: 'text', text: 'Budget verified.' }]
+    ]
+  });
+
+  try {
+    await host.run('Test read_batch output budget');
+    const toolResults = host.events.filter(e => e.type === 'tool/result');
+    assert.equal(toolResults.length, 1);
+    const output = toolResults[0].data.message.content.map(b => b.text).join('\n');
+    assert.match(output, /\[line truncated: \+403 chars\]/);
+    assert.match(output, /=== \[TRUNCATED\] third\.txt ===/);
+    assert.match(output, /maxTotalBytes=600/);
+    assert.doesNotMatch(output, new RegExp('X'.repeat(200)));
+  } finally {
+    await host.dispose();
+  }
+});
+
+test('edit_batch pre-flights same-file multi-edits on disk and prevents partial file corruption', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-edit-preflight-'));
+  const targetFile = path.join(tempDir, 'target.txt');
+  const otherFile = path.join(tempDir, 'other.txt');
+  fs.writeFileSync(targetFile, 'alpha beta gamma', 'utf8');
+  fs.writeFileSync(otherFile, 'hello world', 'utf8');
+
+  const host = await createTestRuntime({
+    editHandler(args) {
+      const raw = fs.readFileSync(args.file_path, 'utf8');
+      if (!raw.includes(args.old_string)) throw new Error('old_string not found');
+      fs.writeFileSync(args.file_path, raw.replace(args.old_string, args.new_string), 'utf8');
+      return `Edited ${args.file_path}`;
+    },
+    script: [
+      [call('eb-preflight', 'edit_batch', {
+        edits: [
+          { file_path: targetFile, old_string: 'alpha', new_string: 'ALPHA' },
+          { file_path: targetFile, old_string: 'non-existent-second-hunk', new_string: 'BETA' },
+          { file_path: otherFile, old_string: 'world', new_string: 'DSH' }
+        ]
+      })],
+      [{ type: 'text', text: 'Pre-flight protected target.txt while updating other.txt.' }]
+    ]
+  });
+
+  try {
+    await host.run('Edit batch with same-file preflight protection');
+    // targetFile must remain completely untouched because hunk #2 failed pre-flight
+    assert.equal(fs.readFileSync(targetFile, 'utf8'), 'alpha beta gamma');
+    // Independent valid file still succeeded
+    assert.equal(fs.readFileSync(otherFile, 'utf8'), 'hello DSH');
+    // Zero edit dispatches were sent for targetFile
+    const targetEditCalls = host.calls.filter(c => c.name === 'edit' && c.args.file_path === targetFile);
+    assert.equal(targetEditCalls.length, 0);
+
+    const stats = host.compositeTools.getStats(host.agent.session);
+    assert.equal(stats.editsSucceeded, 1);
+    assert.equal(stats.editsFailed, 2);
+  } finally {
+    await host.dispose();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('edit_batch atomic=true aborts entire cross-file batch on pre-flight failure without any writes', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-edit-atomic-'));
+  const fileA = path.join(tempDir, 'a.txt');
+  const fileB = path.join(tempDir, 'b.txt');
+  fs.writeFileSync(fileA, 'foo = 1', 'utf8');
+  fs.writeFileSync(fileB, 'bar = 2', 'utf8');
+
+  const host = await createTestRuntime({
+    editHandler(args) {
+      const raw = fs.readFileSync(args.file_path, 'utf8');
+      if (!raw.includes(args.old_string)) throw new Error('old_string not found');
+      fs.writeFileSync(args.file_path, raw.replace(args.old_string, args.new_string), 'utf8');
+      return `Edited ${args.file_path}`;
+    },
+    script: [
+      [call('eb-atomic', 'edit_batch', {
+        atomic: true,
+        edits: [
+          { file_path: fileA, old_string: 'foo = 1', new_string: 'foo = 99' },
+          { file_path: fileB, old_string: 'missing = 0', new_string: 'bar = 99' }
+        ]
+      })],
+      [{ type: 'text', text: 'Atomic batch aborted cleanly.' }]
+    ]
+  });
+
+  try {
+    await host.run('Atomic edit_batch test');
+    assert.equal(fs.readFileSync(fileA, 'utf8'), 'foo = 1');
+    assert.equal(fs.readFileSync(fileB, 'utf8'), 'bar = 2');
+    assert.equal(host.calls.filter(c => c.name === 'edit').length, 0);
+
+    const toolResults = host.events.filter(e => e.type === 'tool/result');
+    assert.equal(toolResults[0].data.message.isError, true);
+    const output = toolResults[0].data.message.content.map(b => b.text).join('\n');
+    assert.match(output, /Atomic edit_batch aborted/);
+  } finally {
+    await host.dispose();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('edit_batch skips subsequent same-file edits after a runtime failure when preflight cannot read file', async () => {
+  const host = await createTestRuntime({
+    files: {
+      'virtual-only.txt': 'keep me intact\nsecond line'
+    },
+    script: [
+      [call('eb-failfast', 'edit_batch', {
+        edits: [
+          { file_path: 'virtual-only.txt', old_string: 'missing-first', new_string: 'nope' },
+          { file_path: 'virtual-only.txt', old_string: 'keep me intact', new_string: 'mutated' }
+        ]
+      })],
+      [{ type: 'text', text: 'Fail-fast verified.' }]
+    ]
+  });
+
+  try {
+    await host.run('Fail-fast same-file edit test');
+    assert.equal(host.virtualFs.get('virtual-only.txt'), 'keep me intact\nsecond line');
+    assert.equal(host.calls.filter(c => c.name === 'edit').length, 1);
+    const toolResults = host.events.filter(e => e.type === 'tool/result');
+    assert.equal(toolResults[0].data.message.isError, true);
+    const output = toolResults[0].data.message.content.map(b => b.text).join('\n');
+    assert.match(output, /Skipped edit #2 after an earlier failure/);
   } finally {
     await host.dispose();
   }

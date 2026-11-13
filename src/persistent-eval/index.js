@@ -93,7 +93,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
 
   // Pre-warm on turn/start event so worker processes are already hot during model inference
   ctx.on('turn/start', (turn) => {
-    const session = turn?.session;
+    const session = turn?.agent?.session ?? turn?.session;
     pool.prewarm(session, { python: config.python, node: config.node });
   });
   // Clean up all daemon workers when plugin context is disposed
@@ -134,11 +134,16 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
       isConcurrencySafe: () => false,
       async execute(args, exec) {
         exec?.signal?.throwIfAborted();
-        const runner = pool.getPythonRunner(exec?.session);
+        const session = exec?.agent?.session ?? exec?.session;
+        const runner = pool.getPythonRunner(session);
         const code = args?.code || '';
         const reset = Boolean(args?.reset);
 
-        const response = await runner.execute(code, { reset, timeoutMs: config.timeoutMs });
+        const response = await runner.execute(code, {
+          reset,
+          timeoutMs: config.timeoutMs,
+          signal: exec?.signal
+        });
         return formatEvalOutput(response);
       }
     });
@@ -174,11 +179,16 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
       isConcurrencySafe: () => false,
       async execute(args, exec) {
         exec?.signal?.throwIfAborted();
-        const runner = pool.getNodeRunner(exec?.session);
+        const session = exec?.agent?.session ?? exec?.session;
+        const runner = pool.getNodeRunner(session);
         const code = args?.code || '';
         const reset = Boolean(args?.reset);
 
-        const response = await runner.execute(code, { reset, timeoutMs: config.timeoutMs });
+        const response = await runner.execute(code, {
+          reset,
+          timeoutMs: config.timeoutMs,
+          signal: exec?.signal
+        });
         return formatEvalOutput(response);
       }
     });
