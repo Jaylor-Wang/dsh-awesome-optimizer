@@ -59,7 +59,10 @@ export function apply(ctx, raw = {}) {
 
   const evalConfig = raw.persistentEval ?? config.persistentEval ?? {};
   const evalService = applyPersistentEval(ctx, evalConfig);
-  if (evalService) ctx.provide('persistentEval', evalService);
+  if (evalService) {
+    ctx.provide('persistentEval');
+    ctx.persistentEval = evalService;
+  }
 
   const convergenceConfig = raw.convergence ?? config.convergence ?? {};
   const convergenceService = applyConvergence(ctx, convergenceConfig);

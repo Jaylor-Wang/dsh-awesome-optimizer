@@ -67,6 +67,35 @@ export class DaemonPool {
     return sessionMap.node;
   }
 
+  /**
+   * Pre-warm worker processes in background so they are ready before tool execution.
+   * Silently swallows startup failures (e.g. missing runtime) so it never interrupts session flow.
+   * @param {any} [session]
+   * @param {object} [options]
+   * @param {boolean} [options.python=true]
+   * @param {boolean} [options.node=true]
+   */
+  async prewarm(session, { python = true, node = true } = {}) {
+    const promises = [];
+    if (python) {
+      try {
+        const py = this.getPythonRunner(session);
+        promises.push(py.ensureStarted().catch(() => {}));
+      } catch {
+        // Ignore prewarm failure
+      }
+    }
+    if (node) {
+      try {
+        const nd = this.getNodeRunner(session);
+        promises.push(nd.ensureStarted().catch(() => {}));
+      } catch {
+        // Ignore prewarm failure
+      }
+    }
+    await Promise.all(promises);
+  }
+
   destroySession(session) {
     const key = this._getKey(session);
     const sessionMap = this.runnersBySession.get(key);

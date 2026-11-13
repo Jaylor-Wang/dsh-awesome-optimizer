@@ -30,6 +30,7 @@ export declare function formatEvalOutput(resp: PersistentEvalResponse | null | u
 export interface PersistentEvalService {
   pool: any;
   config: PersistentEvalOptions;
+  prewarm(session?: unknown): Promise<void>;
   destroy(): void;
 }
 
@@ -42,6 +43,7 @@ export declare class StdioWorkerRunner {
 
 export declare class DaemonPool {
   constructor(config?: any);
+  prewarm(session?: any, options?: { python?: boolean; node?: boolean }): Promise<void>;
   getPythonRunner(session?: any): StdioWorkerRunner;
   getNodeRunner(session?: any): StdioWorkerRunner;
   destroySession(session?: any): void;

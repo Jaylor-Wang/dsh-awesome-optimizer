@@ -44,10 +44,19 @@ function serializeResult(val) {
   if (val === null) return { result: null, resultRepr: 'null' };
 
   let repr;
-  try {
-    repr = util.inspect(val, { depth: 4, maxArrayLength: 100, breakLength: 80 });
-  } catch {
-    repr = String(val);
+  if (typeof val === 'number' && !Number.isInteger(val)) {
+    const rounded = Number(val.toFixed(10));
+    if (Math.abs(val - rounded) < 1e-12) {
+      repr = String(rounded);
+    } else {
+      repr = String(val);
+    }
+  } else {
+    try {
+      repr = util.inspect(val, { depth: 4, maxArrayLength: 100, breakLength: 80 });
+    } catch {
+      repr = String(val);
+    }
   }
 
   let serializable;

@@ -184,4 +184,50 @@ fetched + globalThis.offset;
       '[Error: Syntax error]'
     );
   });
+
+  test('prewarm boots workers ahead of time and turn/start triggers prewarm', async () => {
+    const { ctx, registeredTools } = createMockContext();
+    serviceInstance = applyPersistentEval(ctx, {
+      enabled: true,
+      python: true,
+      node: true
+    });
+
+    const mockSession = { id: 'sess-prewarm-test' };
+    const pyRunner = serviceInstance.pool.getPythonRunner(mockSession);
+    assert.equal(pyRunner.isReady, false);
+
+    // Call service.prewarm()
+    await serviceInstance.prewarm(mockSession);
+    assert.equal(pyRunner.isReady, true);
+
+    // Calling execute now hits already-ready worker
+    const pyTool = registeredTools.get(EVAL_PYTHON_TOOL);
+    const out = await pyTool.execute({ code: 'math.sqrt(16)' }, { session: mockSession });
+    assert.equal(out, '=> 4.0');
+
+    // Trigger turn/start event for another session
+    const autoSession = { id: 'sess-turn-start' };
+    const autoPyRunner = serviceInstance.pool.getPythonRunner(autoSession);
+    assert.equal(autoPyRunner.isReady, false);
+
+    ctx.emit('turn/start', { session: autoSession });
+    // Allow microtask tick
+    await new Promise(r => setTimeout(r, 100));
+    assert.equal(autoPyRunner.isReady, true);
+  });
+
+  test('formatEvalOutput produces zero-token-waste ultra compact output', () => {
+    // Pure expression evaluation (no stdout): single line, no blank lines
+    assert.equal(formatEvalOutput({ success: true, stdout: '', stderr: '', result: 42, resultRepr: '42' }), '=> 42');
+
+    // Output with trailing newlines is trimmed
+    assert.equal(formatEvalOutput({ success: true, stdout: 'Calculated successfully\n\n\n', stderr: '', result: null }), 'Calculated successfully');
+
+    // Both stdout and result
+    assert.equal(formatEvalOutput({ success: true, stdout: 'Info\n', stderr: '', result: 100, resultRepr: '100' }), 'Info\n=> 100');
+
+    // Floating point precision noise is compacted
+    assert.equal(formatEvalOutput({ success: true, stdout: '', stderr: '', result: 0.1 + 0.2, resultRepr: '0.30000000000000004' }), '=> 0.3');
+  });
 });

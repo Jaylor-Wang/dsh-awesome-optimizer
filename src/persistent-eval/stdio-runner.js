@@ -32,6 +32,24 @@ export class StdioWorkerRunner {
     this.launchCount = 0;
   }
 
+  _ref() {
+    try {
+      if (this.child?.ref) this.child.ref();
+      if (this.child?.stdin?.ref) this.child.stdin.ref();
+      if (this.child?.stdout?.ref) this.child.stdout.ref();
+      if (this.child?.stderr?.ref) this.child.stderr.ref();
+    } catch {}
+  }
+
+  _unref() {
+    try {
+      if (this.child?.unref) this.child.unref();
+      if (this.child?.stdin?.unref) this.child.stdin.unref();
+      if (this.child?.stdout?.unref) this.child.stdout.unref();
+      if (this.child?.stderr?.unref) this.child.stderr.unref();
+    } catch {}
+  }
+
   ensureStarted() {
     if (this.child && !this.child.killed && this.isReady) {
       return Promise.resolve();
@@ -62,6 +80,8 @@ export class StdioWorkerRunner {
           env: mergedEnv,
           windowsHide: true
         });
+
+        this._ref();
 
         this.rl = readline.createInterface({
           input: this.child.stdout,
@@ -105,6 +125,9 @@ export class StdioWorkerRunner {
       this.isReady = true;
       const waiters = this.readyWaiters.splice(0, this.readyWaiters.length);
       for (const w of waiters) w();
+      if (!this.currentTask && this.pendingQueue.length === 0) {
+        this._unref();
+      }
       return;
     }
 
@@ -194,9 +217,16 @@ export class StdioWorkerRunner {
   }
 
   async _drainQueue() {
-    if (this.currentTask || this.pendingQueue.length === 0 || this.isDestroyed) {
+    if (this.currentTask || this.isDestroyed) {
       return;
     }
+
+    if (this.pendingQueue.length === 0) {
+      this._unref();
+      return;
+    }
+
+    this._ref();
 
     // Ensure child process is healthy and ready before pulling tasks from queue
     if (!this.child || !this.isReady) {
@@ -213,6 +243,7 @@ export class StdioWorkerRunner {
     }
 
     if (this.currentTask || this.pendingQueue.length === 0 || this.isDestroyed || !this.child) {
+      if (this.pendingQueue.length === 0) this._unref();
       return;
     }
 
@@ -261,9 +292,12 @@ export class StdioWorkerRunner {
     if (this.currentTask && this.currentTask.timeoutTimer) {
       clearTimeout(this.currentTask.timeoutTimer);
     }
+    if (this.rl) {
+      try { this.rl.close(); } catch {}
+      this.rl = null;
+    }
     this._forceKill();
     this.child = null;
-    this.rl = null;
     this.pendingQueue = [];
     this.currentTask = null;
   }

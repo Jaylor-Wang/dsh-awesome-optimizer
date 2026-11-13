@@ -23,7 +23,10 @@ export function formatEvalOutput(resp) {
   const parts = [];
 
   if (resp.stdout && resp.stdout.length > 0) {
-    parts.push(resp.stdout.trimEnd());
+    const trimmed = resp.stdout.trimEnd();
+    if (trimmed.length > 0) {
+      parts.push(trimmed);
+    }
   }
 
   if (resp.result !== null && resp.result !== undefined) {
@@ -35,13 +38,22 @@ export function formatEvalOutput(resp) {
         repr = String(resp.result);
       }
     }
+    if (typeof resp.result === 'number' && !Number.isInteger(resp.result)) {
+      const rounded = Number(resp.result.toFixed(10));
+      if (Math.abs(resp.result - rounded) < 1e-12) {
+        repr = String(rounded);
+      }
+    }
     parts.push(`=> ${repr}`);
   }
 
   if (!resp.success) {
     if (resp.error) parts.push(`[Error: ${resp.error}]`);
     if (resp.stderr && resp.stderr.length > 0) {
-      parts.push(resp.stderr.trimEnd());
+      const trimmedErr = resp.stderr.trimEnd();
+      if (trimmedErr.length > 0) {
+        parts.push(trimmedErr);
+      }
     }
   }
 
@@ -64,12 +76,27 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
     maxOutputBytes: config.maxOutputBytes
   });
 
-  // Clean up session workers when session ends
+  // Clean up session workers when session ends & prewarm on session/turn starts
   ctx.on('session/event', (session, event) => {
     if (event?.type === 'session/destroy' || event?.type === 'session/close') {
       pool.destroySession(session);
+    } else if (event?.type === 'turn/start' || event?.type === 'session/start' || event?.type === 'session/create') {
+      pool.prewarm(session, { python: config.python, node: config.node });
     }
   });
+
+  // Pre-warm on turn/start event so worker processes are already hot during model inference
+  ctx.on('turn/start', (turn) => {
+    const session = turn?.session;
+    pool.prewarm(session, { python: config.python, node: config.node });
+  });
+
+  // Clean up all daemon workers when plugin context is disposed
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(() => () => {
+      pool.destroyAll();
+    });
+  }
 
   if (config.python) {
     ctx.tools.register({
@@ -77,6 +104,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
       description: [
         'Execute Python code inside a persistent stateful kernel.',
         'Variables, functions, imports, and state persist across calls within the session.',
+        'Standard modules (math, re, json, time, collections, itertools) are eagerly pre-imported in scope.',
         'Use for exploratory calculations, data processing, kinematic/algorithmic solving, and intermediate analysis without writing temp files to disk.'
       ].join(' '),
       parameters: {
@@ -154,6 +182,9 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
   return {
     pool,
     config,
+    prewarm(session) {
+      return pool.prewarm(session, { python: config.python, node: config.node });
+    },
     destroy() {
       pool.destroyAll();
     }

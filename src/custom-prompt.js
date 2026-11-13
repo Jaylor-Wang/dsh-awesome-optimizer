@@ -66,7 +66,7 @@ export function formatEnvironmentFacts(processRef = process, pythonDetector = de
     '- Standalone CLIs: playwright-cli, gh, ast-grep, and opencli are standalone binaries via bash; NEVER require/import as node modules.',
     '- Browser automation: playwright-cli blocks "file:" URLs (serve via loopback HTTP); \'screenshot\' takes selector target ONLY (no output filename; auto-saved to .playwright-cli/). NEVER probe via \'--help\' or \'--version\'.',
     '- Zero startup probing: workspace context and host facts are already hydrated. NEVER run exploratory probing (pwd, ls, node -v, which).',
-    '- Persistent evaluation: `eval_python` and `eval_node` maintain stateful in-memory kernels across turns without disk pollution; prioritize for intermediate math, kinematic solving, and data filtering.',
+    '- Persistent evaluation: `eval_python` and `eval_node` maintain stateful in-memory kernels across turns without disk pollution (math, re, json, time, collections, itertools pre-imported); prioritize for intermediate math, kinematic solving, and data filtering.',
     '- Ad-hoc scripts & cleanup: MUST write ad-hoc Node/Python scripts to disk via native write first and execute by file path; remove temporary artifacts directly via bash (rm -rf).'
   ].join('\n');
 }
@@ -352,9 +352,11 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
     return assembly;
   });
 
-  ctx.on('dispose', () => {
-    manager.dispose();
-  });
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(() => () => {
+      manager.dispose();
+    });
+  }
 
   return manager;
 }

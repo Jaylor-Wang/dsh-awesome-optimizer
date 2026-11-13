@@ -12,6 +12,10 @@ import ast
 import json
 import time
 import traceback
+import math
+import re
+import collections
+import itertools
 
 # Ensure strict UTF-8 stdio streams with line buffering
 if hasattr(sys.stdin, "reconfigure"):
@@ -30,6 +34,12 @@ def create_fresh_scope():
         "__name__": "__main__",
         "__doc__": "DSH Persistent Python Kernel",
         "__builtins__": __builtins__,
+        "math": math,
+        "re": re,
+        "json": json,
+        "time": time,
+        "collections": collections,
+        "itertools": itertools,
     }
 
 GLOBAL_SCOPE = create_fresh_scope()
@@ -67,7 +77,14 @@ def execute_code(code, scope):
 def serialize_result(result):
     if result is None:
         return None, None
-    result_repr = repr(result)
+    if isinstance(result, float):
+        rounded = round(result, 10)
+        if abs(result - rounded) < 1e-12:
+            result_repr = str(rounded)
+        else:
+            result_repr = repr(result)
+    else:
+        result_repr = repr(result)
     try:
         # Check if directly JSON-serializable
         json.dumps(result)

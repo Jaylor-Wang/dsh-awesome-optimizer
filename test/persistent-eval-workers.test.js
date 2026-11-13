@@ -172,6 +172,24 @@ f"【{title}】动画计算完成"
       assert.ok(checkRes.error.includes("'radius' is not defined"));
     });
 
+    test('should have eager standard math/algorithms modules pre-imported without import', async () => {
+      const res = await pyClient.send({
+        id: 'py-eager-scope',
+        code: `[math.hypot(3, 4), json.loads('{"a": 1}')['a'], collections.Counter(['x', 'x', 'y'])['x']]`
+      });
+      assert.equal(res.success, true);
+      assert.deepEqual(res.result, [5.0, 1, 2]);
+    });
+
+    test('should clean binary floating point noise in repr', async () => {
+      const res = await pyClient.send({
+        id: 'py-float-clean',
+        code: '0.1 + 0.2'
+      });
+      assert.equal(res.success, true);
+      assert.equal(res.resultRepr, '0.3');
+    });
+
     test('teardown python worker', () => {
       if (pyClient) pyClient.kill();
     });
@@ -275,6 +293,15 @@ globalThis.increment = (step = 1) => {
       const checkRes = await nodeClient.send({ id: 'node-check', code: 'typeof globalThis.counter' });
       assert.equal(checkRes.success, true);
       assert.equal(checkRes.result, 'undefined');
+    });
+
+    test('should clean binary floating point noise in repr', async () => {
+      const res = await nodeClient.send({
+        id: 'node-float-clean',
+        code: '0.1 + 0.2'
+      });
+      assert.equal(res.success, true);
+      assert.equal(res.resultRepr, '0.3');
     });
 
     test('teardown node worker', () => {

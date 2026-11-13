@@ -295,6 +295,14 @@ export async function createTestRuntime({
     };
 
     owner.dispose = async () => {
+      const customPrompt = ctx.get('customPrompt');
+      if (customPrompt && typeof customPrompt.dispose === 'function') {
+        customPrompt.dispose();
+      }
+      const evalService = ctx.get('persistentEval');
+      if (evalService && typeof evalService.destroy === 'function') {
+        evalService.destroy();
+      }
       for (const h of [...handles].reverse()) await h.dispose();
       for (const f of [...fibers].reverse()) await f.dispose();
     };

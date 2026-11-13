@@ -15,7 +15,11 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
 ## Highlights in v2.0.0
 
 - **Persistent Python & Node Evaluation Daemons (`eval_python` / `eval_node`)**:
-  Zero-dependency stateful execution kernels over line-delimited stdio JSON frames. Retains global scopes, functions, imports, and variables across turns (with Node top-level `await`). Slashes repetitive calculation latency from 37ms to **0.65ms (98.3% speedup)**, eliminating temporary file pollution.
+  Zero-dependency stateful execution kernels over line-delimited stdio JSON frames. Retains global scopes, functions, imports, and variables across turns (with Node top-level `await`). Slashes repetitive calculation latency from 37ms to **0.61ms (98.5% speedup)**, eliminating temporary file pollution.
+- **Three Extreme Performance Dimensions**:
+  1. **Pre-warming Daemon**: Listens to session `turn/start` events to pre-spawn and handshake worker processes during model first-token generation, completely eliminating the 80ms cold-start spike.
+  2. **Eager Scope Ingestion**: Standard algorithm libraries (`math`, `re`, `json`, `time`, `collections`, `itertools`) are eagerly pre-imported into global Python scope, saving LLM token generation overhead.
+  3. **Zero-Token-Waste Formatting**: Ultra-compact single line return format for pure expressions (`=> 42`), trimmed trailing newlines, and intelligent smoothing of IEEE-754 binary floating-point noise (`0.30000000000000004` -> `0.3`) to accelerate LLM Prefill.
 - **Watchdog Timeout & Self-Healing Auto-Restart**:
   Built-in execution watchdog forces termination of infinite loops (`while True:`) or blocked input across platforms without freezing the host process, automatically spinning up fresh instances for seamless queued recovery.
 - **Anti-Dumping Output Guard**:
