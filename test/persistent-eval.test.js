@@ -1,7 +1,6 @@
 import { test, describe, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyPersistentEval, EVAL_PYTHON_TOOL, EVAL_NODE_TOOL, formatEvalOutput } from '../src/persistent-eval/index.js';
-
+import { applyPersistentEval, EVAL_PYTHON_TOOL, EVAL_NODE_TOOL, formatEvalOutput, StdioWorkerRunner } from '../src/persistent-eval/index.js';
 function createMockContext() {
   const registeredTools = new Map();
   const eventListeners = new Map();
@@ -229,5 +228,44 @@ fetched + globalThis.offset;
 
     // Floating point precision noise is compacted
     assert.equal(formatEvalOutput({ success: true, stdout: '', stderr: '', result: 0.1 + 0.2, resultRepr: '0.30000000000000004' }), '=> 0.3');
+  });
+
+  test('StdioWorkerRunner rejects ensureStarted and execute immediately when binary fails to spawn', async () => {
+    const brokenRunner = new StdioWorkerRunner({
+      command: 'definitely-nonexistent-binary-dsh-test-xyz',
+      args: []
+    });
+
+    await assert.rejects(
+      () => brokenRunner.execute('1 + 1'),
+      err => err instanceof Error && /ENOENT|spawn|exited/i.test(err.message)
+    );
+    brokenRunner.destroy();
+  });
+
+  test('StdioWorkerRunner rejects pending startup waiters when destroyed', async () => {
+    const runner = new StdioWorkerRunner({
+      command: 'node',
+      args: ['-e', 'setTimeout(() => {}, 5000)']
+    });
+    const startPromise = runner.ensureStarted();
+    runner.destroy();
+    await assert.rejects(
+      () => startPromise,
+      /Worker runner has been destroyed/
+    );
+  });
+
+  test('applyPersistentEval destroys session workers on session/disposed', async () => {
+    const { ctx } = createMockContext();
+    serviceInstance = applyPersistentEval(ctx, { enabled: true });
+    const session = { id: 'sess-dispose-test' };
+
+    const nodeRunner = serviceInstance.pool.getNodeRunner(session);
+    await nodeRunner.ensureStarted();
+    assert.equal(nodeRunner.isDestroyed, false);
+
+    ctx.emit('session/disposed', session);
+    assert.equal(nodeRunner.isDestroyed, true);
   });
 });

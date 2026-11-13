@@ -5,10 +5,25 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-56%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-72%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 High-performance runtime policy guards, persistent Python & Node evaluation daemons, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
+
+---
+
+## Highlights in v2.2.0
+
+- **Persistent Eval Lifecycle & Cross-Platform Hardening**:
+  - `StdioWorkerRunner` now rejects pending startup/queued promises on spawn errors, early exits, and `destroy()` so worker startup failures never hang indefinitely.
+  - `DaemonPool` reuses `detectPythonEnv()` (`python` / `python3`) with optional `pythonCommand` override, and hooks `session/disposed` to prevent idle worker leaks.
+  - `node_worker.mjs` compiles synchronously first via `vm.Script` so `await` inside strings, comments, or `async` functions no longer shadows top-level state, and safely handles trailing comments in top-level `await` expressions.
+- **PTC Sub-Call Isolation & Guard Accuracy**:
+  - `runtimePolicy` now classifies `edit_batch`, `eval_python`, and `eval_node`, isolates nested `exec.parent !== undefined` sub-calls during parallel `read_batch`, catches flagged inline scripts (`pwsh -NoProfile -Command`, `python -u -c`), and avoids false positives inside quoted commit messages.
+  - `fileMutationPolicy` delegates `read_batch` observation to successful leaf `read` pipeline results; `failureRecovery` preserves pending `retry_failed_write` records across `eval_python` / `eval_node` calls.
+- **Safer Custom Prompt Replacement, Linter & Telemetry**:
+  - `customPrompt` `replace-all` mode now strips only `OFFICIAL_SECTION_PREFIXES` by default (preserving non-official host/plugin sections), adds `preserveSections`, `includeCliFacts`, and `extraEnvironmentFacts`, and supports deferred `.dsh/` directory hot-reload.
+  - `telemetry` caches per-message SHA-256 digests (`WeakMap`) to eliminate `O(N²)` prefix-check serialization; `prompt-linter` preserves fenced code blocks in `fixPrompt`.
 
 ---
 

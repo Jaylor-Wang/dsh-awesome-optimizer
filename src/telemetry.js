@@ -1,7 +1,7 @@
+import { createHash } from 'node:crypto';
 import z from '@deepseek-ai/schemastery';
 import { SOURCE as CONVERGENCE_SOURCE } from './convergence.js';
 import { RECOVERY_SOURCE } from './failure-recovery.js';
-
 export const TelemetryConfig = z.object({
   enabled: z.boolean().default(true),
   trackStreams: z.boolean().default(true),
@@ -85,8 +85,19 @@ export class AgentTelemetryManager {
     this.sessionStates = new WeakMap();
     this.sessionsById = new Map();
     this.activeSession = null;
+    this.messageDigestCache = new WeakMap();
   }
 
+  #digestMessage(message) {
+    if (message && typeof message === 'object') {
+      const cached = this.messageDigestCache.get(message);
+      if (cached !== undefined) return cached;
+      const digest = createHash('sha256').update(JSON.stringify(message)).digest('hex');
+      this.messageDigestCache.set(message, digest);
+      return digest;
+    }
+    return createHash('sha256').update(String(message)).digest('hex');
+  }
   #createTurnState(turn) {
     return {
       turn,
@@ -180,7 +191,7 @@ export class AgentTelemetryManager {
     if (!state) return next();
 
     if (Array.isArray(options?.messages)) {
-      const history = options.messages.map(message => JSON.stringify(message));
+      const history = options.messages.map(message => this.#digestMessage(message));
       if (state.previousHistory?.some((msg, idx) => history[idx] !== msg)) {
         state.prefixChanges++;
       }

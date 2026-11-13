@@ -78,7 +78,8 @@ function wrapAsyncCode(code) {
   const lines = trimmed.split('\n');
   let lastIndex = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].trim().length > 0) {
+    const lineTrimmed = lines[i].trim();
+    if (lineTrimmed.length > 0 && !lineTrimmed.startsWith('//') && !/^\/\*.*\*\/$/.test(lineTrimmed)) {
       lastIndex = i;
       break;
     }
@@ -93,8 +94,15 @@ function wrapAsyncCode(code) {
 
   if (!statementKeywords.test(lastLine)) {
     const expr = lastLine.endsWith(';') ? lastLine.slice(0, -1) : lastLine;
-    lines[lastIndex] = `return (${expr});`;
-    return `(async () => {\n${lines.join('\n')}\n})()`;
+    const candidateLines = [...lines];
+    candidateLines[lastIndex] = `return (\n${expr}\n);`;
+    const candidate = `(async () => {\n${candidateLines.join('\n')}\n})()`;
+    try {
+      new vm.Script(candidate, { filename: '<eval_kernel>' });
+      return candidate;
+    } catch {
+      // Fall back to executing unmodified statements if wrapping last line fails syntax check
+    }
   }
 
   return `(async () => {\n${trimmed}\n})()`;
@@ -104,19 +112,22 @@ async function executeInContext(code, context) {
   const trimmed = code.trim();
   if (!trimmed) return undefined;
 
-  // If code appears to use top-level await, wrap in async IIFE
-  const hasTopLevelAwait = /\bawait\s+/.test(trimmed);
-
-  if (hasTopLevelAwait) {
-    const wrappedCode = wrapAsyncCode(trimmed);
-    const script = new vm.Script(wrappedCode, { filename: '<eval_kernel>' });
-    const promise = script.runInContext(context, { breakOnSigint: true });
-    return await promise;
-  } else {
-    // Standard execution: natively returns the value of the last evaluated expression
-    const script = new vm.Script(trimmed, { filename: '<eval_kernel>' });
-    return script.runInContext(context, { breakOnSigint: true });
+  // Compile synchronously first so await inside strings, comments, or async functions
+  // never triggers unnecessary IIFE wrapping that would shadow top-level declarations.
+  let syncScript;
+  try {
+    syncScript = new vm.Script(trimmed, { filename: '<eval_kernel>' });
+  } catch (err) {
+    if (err instanceof SyntaxError && /\bawait\b/i.test(err.message)) {
+      const wrappedCode = wrapAsyncCode(trimmed);
+      const asyncScript = new vm.Script(wrappedCode, { filename: '<eval_kernel>' });
+      const promise = asyncScript.runInContext(context, { breakOnSigint: true });
+      return await promise;
+    }
+    throw err;
   }
+
+  return syncScript.runInContext(context, { breakOnSigint: true });
 }
 
 function sendFrame(payload) {

@@ -8,6 +8,7 @@ export interface PersistentEvalOptions {
   enabled?: boolean;
   python?: boolean;
   node?: boolean;
+  pythonCommand?: string;
   timeoutMs?: number;
   maxOutputBytes?: number;
 }
@@ -28,25 +29,48 @@ export interface PersistentEvalResponse {
 export declare function formatEvalOutput(resp: PersistentEvalResponse | null | undefined): string;
 
 export interface PersistentEvalService {
-  pool: any;
+  pool: DaemonPool;
   config: PersistentEvalOptions;
   prewarm(session?: unknown): Promise<void>;
   destroy(): void;
 }
 
+export interface StdioWorkerRunnerOptions {
+  command: string;
+  args?: string[];
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+  env?: Record<string, string | undefined>;
+}
+
+export interface StdioWorkerExecuteOptions {
+  action?: 'eval' | 'ping' | 'reset';
+  reset?: boolean;
+  timeoutMs?: number;
+}
+
+export interface DaemonPoolConfig {
+  pythonCommand?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+}
+
 export declare class StdioWorkerRunner {
-  constructor(options: any);
+  isReady: boolean;
+  isDestroyed: boolean;
+  launchCount: number;
+  constructor(options: StdioWorkerRunnerOptions);
   ensureStarted(): Promise<void>;
-  execute(code: string, options?: any): Promise<PersistentEvalResponse>;
+  execute(code: string, options?: StdioWorkerExecuteOptions): Promise<PersistentEvalResponse>;
   destroy(): void;
 }
 
 export declare class DaemonPool {
-  constructor(config?: any);
-  prewarm(session?: any, options?: { python?: boolean; node?: boolean }): Promise<void>;
-  getPythonRunner(session?: any): StdioWorkerRunner;
-  getNodeRunner(session?: any): StdioWorkerRunner;
-  destroySession(session?: any): void;
+  constructor(config?: DaemonPoolConfig);
+  prewarm(session?: unknown, options?: { python?: boolean; node?: boolean }): Promise<void>;
+  getPythonRunner(session?: unknown): StdioWorkerRunner;
+  getNodeRunner(session?: unknown): StdioWorkerRunner;
+  destroySession(session?: unknown): void;
   destroyAll(): void;
 }
 

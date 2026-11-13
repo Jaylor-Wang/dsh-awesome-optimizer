@@ -18,9 +18,9 @@ const CLI_REQUIRE_PATTERNS = [
 ];
 
 const WEAK_MODALS = [
-  { pattern: /\b[Bb]ias(?:ed)?\s+toward\b/g, suggestion: 'Prioritize' },
-  { pattern: /\b[Tt]ry\s+to\b/g, suggestion: 'Use direct imperative verbs' },
-  { pattern: /\b[Pp]lease\b/g, suggestion: 'Omit conversational politeness filler' }
+  { pattern: /\b[Bb]ias(?:ed)?\s+toward\b/g, suggestion: 'Prioritize', fixable: true },
+  { pattern: /\b[Tt]ry\s+to\b/g, suggestion: 'Use direct imperative verbs', fixable: false },
+  { pattern: /\b[Pp]lease\b/g, suggestion: 'Omit conversational politeness filler', fixable: false }
 ];
 
 const LEGACY_JARGON = [
@@ -183,7 +183,7 @@ export function lintPrompt(content = '', options = {}) {
           severity: 'info',
           line: lineNum,
           message: `Weak modal or soft preference detected. Suggestion: ${wm.suggestion}.`,
-          fixable: true
+          fixable: wm.fixable
         });
         wm.pattern.lastIndex = 0;
       }
@@ -270,34 +270,51 @@ export function lintPrompt(content = '', options = {}) {
 export function fixPrompt(content = '', options = {}) {
   if (typeof content !== 'string') return '';
 
-  let fixed = content;
-
-  // 1. Remove obsolete jargon / ralph
-  fixed = fixed.replace(/\s*\(no workflows,\s*ralph(?:,\s*or delegation)?\)/gi, '');
-  fixed = fixed.replace(/\b(?:no workflows,\s*)?ralph(?:,\s*or delegation)?\b/gi, '');
-
-  // 2. Fix weak modals
-  fixed = fixed.replace(/\bBias toward\b/g, 'Prioritize');
-  fixed = fixed.replace(/\bbias toward\b/g, 'prioritize');
-
-  // 3. Clean up tool phrasing if tools are not loaded in preset (or by default cleanup)
   const activeTools = resolveActiveToolNames(options);
-  if (!activeTools || !activeTools.has('tool-pwsh')) {
-    fixed = fixed.replace(/-\s*Shell:\s*harness\s*`bash`\s*only\s*\(`tool-pwsh`\s*disabled\)\.\s*Launch\s*`pwsh\.exe`\s*from\s*`bash`\s*when\s*needed\./gi,
-      '- Shell: ONLY `bash`. Launch `pwsh.exe` from `bash` when needed.');
-  }
+  const lines = content.split('\n');
+  let inCodeBlock = false;
 
-  if (!activeTools || (!activeTools.has('web-search-deepseek') && !activeTools.has('tool-web'))) {
-    fixed = fixed.replace(/-\s*Web:\s*harness\s*`web-search-deepseek`,\s*`web-fetch-http`,\s*and\s*`tool-web`\s*are\s*disabled\.\s*Research\/fetch\s*STRICTLY\s*via\s*skills\s*\(([^)]+)\)\s*or\s*bash\s*CLIs\./gi,
-      '- Web: Research/fetch STRICTLY via skills ($1) or bash CLIs.');
-  }
+  const fixedLines = lines.map((line) => {
+    if (line.trim().startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      return line;
+    }
+    if (inCodeBlock) return line;
 
-  // 4. Uppercase directive constraints
-  for (const dc of DIRECTIVE_CASING) {
-    fixed = fixed.replace(dc.pattern, dc.replacement);
-  }
+    let fixedLine = line;
 
-  return fixed;
+    // 1. Remove obsolete jargon / ralph
+    fixedLine = fixedLine.replace(/\s*\(no workflows,\s*ralph(?:,\s*or delegation)?\)/gi, '');
+    fixedLine = fixedLine.replace(/\b(?:no workflows,\s*)?ralph(?:,\s*or delegation)?\b/gi, '');
+
+    // 2. Fix weak modals
+    fixedLine = fixedLine.replace(/\bBias toward\b/g, 'Prioritize');
+    fixedLine = fixedLine.replace(/\bbias toward\b/g, 'prioritize');
+
+    // 3. Clean up tool phrasing if tools are not loaded in preset (or by default cleanup)
+    if (!activeTools || !activeTools.has('tool-pwsh')) {
+      fixedLine = fixedLine.replace(
+        /-\s*Shell:\s*harness\s*`bash`\s*only\s*\(`tool-pwsh`\s*disabled\)\.\s*Launch\s*`pwsh\.exe`\s*from\s*`bash`\s*when\s*needed\./gi,
+        '- Shell: ONLY `bash`. Launch `pwsh.exe` from `bash` when needed.'
+      );
+    }
+
+    if (!activeTools || (!activeTools.has('web-search-deepseek') && !activeTools.has('tool-web'))) {
+      fixedLine = fixedLine.replace(
+        /-\s*Web:\s*harness\s*`web-search-deepseek`,\s*`web-fetch-http`,\s*and\s*`tool-web`\s*are\s*disabled\.\s*Research\/fetch\s*STRICTLY\s*via\s*skills\s*\(([^)]+)\)\s*or\s*bash\s*CLIs\./gi,
+        '- Web: Research/fetch STRICTLY via skills ($1) or bash CLIs.'
+      );
+    }
+
+    // 4. Uppercase directive constraints
+    for (const dc of DIRECTIVE_CASING) {
+      fixedLine = fixedLine.replace(dc.pattern, dc.replacement);
+    }
+
+    return fixedLine;
+  });
+
+  return fixedLines.join('\n');
 }
 
 /**

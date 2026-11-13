@@ -10,6 +10,7 @@ export const PersistentEvalConfig = z.object({
   enabled: z.boolean().default(true),
   python: z.boolean().default(true),
   node: z.boolean().default(true),
+  pythonCommand: z.string(),
   timeoutMs: z.number().step(1).min(50).max(120000).default(15000),
   maxOutputBytes: z.number().step(1).min(64).max(65536).default(8192)
 });
@@ -72,6 +73,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
   if (!config.enabled) return null;
 
   const pool = new DaemonPool({
+    pythonCommand: config.pythonCommand,
     timeoutMs: config.timeoutMs,
     maxOutputBytes: config.maxOutputBytes
   });
@@ -85,12 +87,15 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
     }
   });
 
+  ctx.on('session/disposed', (session) => {
+    pool.destroySession(session);
+  });
+
   // Pre-warm on turn/start event so worker processes are already hot during model inference
   ctx.on('turn/start', (turn) => {
     const session = turn?.session;
     pool.prewarm(session, { python: config.python, node: config.node });
   });
-
   // Clean up all daemon workers when plugin context is disposed
   if (typeof ctx.effect === 'function') {
     ctx.effect(() => () => {
@@ -144,7 +149,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
       name: EVAL_NODE_TOOL,
       description: [
         'Execute JavaScript code inside a persistent stateful Node.js VM context.',
-        'Variables, functions, and state persist across calls within the session. Supports top-level await.',
+        'Top-level declarations persist across synchronous calls; when using top-level await, assign shared state to globalThis (e.g. globalThis.x = await ...) to persist across turns.',
         'Use for rapid expression evaluation, AST exploration, and data transformations without writing temp files to disk.'
       ].join(' '),
       parameters: {

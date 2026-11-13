@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -6,11 +7,38 @@ import { fileURLToPath } from 'node:url';
 
 // Reuse the installed DSH dependency graph so Cordis service identities stay shared.
 const root = fileURLToPath(new URL('../', import.meta.url));
-const host = path.resolve(process.env.DSH_IMPLEMENTATION_ROOT ?? 'D:/nodejs/node_global/node_modules/@deepseek-ai/dsh');
+
+function resolveDshHost() {
+  if (process.env.DSH_IMPLEMENTATION_ROOT) {
+    return path.resolve(process.env.DSH_IMPLEMENTATION_ROOT);
+  }
+  const candidates = [];
+  try {
+    const res = spawnSync('npm root -g', {
+      encoding: 'utf8',
+      timeout: 3000,
+      windowsHide: true,
+      shell: true
+    });
+    if (res.status === 0 && res.stdout?.trim()) {
+      candidates.push(path.join(res.stdout.trim(), '@deepseek-ai/dsh'));
+    }
+  } catch {}
+  candidates.push(
+    path.resolve(path.dirname(process.execPath), 'node_modules/@deepseek-ai/dsh'),
+    path.resolve(path.dirname(process.execPath), '../lib/node_modules/@deepseek-ai/dsh')
+  );
+  const found = candidates.find(candidate => fs.existsSync(path.join(candidate, 'package.json')));
+  if (!found) {
+    throw new Error('Could not locate @deepseek-ai/dsh installation. Set DSH_IMPLEMENTATION_ROOT to its directory.');
+  }
+  return found;
+}
+
+const host = resolveDshHost();
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const hostManifest = JSON.parse(fs.readFileSync(path.join(host, 'package.json'), 'utf8'));
 assert.equal(hostManifest.name, '@deepseek-ai/dsh');
-
 const packagesToLink = [
   '@deepseek-ai/cordis',
   '@deepseek-ai/schemastery',

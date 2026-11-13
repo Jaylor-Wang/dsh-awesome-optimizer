@@ -205,3 +205,38 @@ test('fileMutationPolicy blocks large full-file overwrites via ctx.fs backend ch
   }
 });
 
+test('failureRecovery preserves pending retry_failed_write across non-mutating eval_python calls', async () => {
+  const largeText = 'M'.repeat(9000);
+  const host = await createTestRuntime({
+    script: [
+      [call('w-fail', 'write', {
+        file_path: 'computed.txt',
+        content: largeText,
+        justification: 'Unpaired justification'
+      })],
+      [call('eval-check', 'eval_python', { code: '2 + 2' })],
+      [call('w-retry', 'retry_failed_write', { call_id: 'w-fail' })],
+      [{ type: 'text', text: 'Recovered after eval.' }]
+    ],
+    writeHandler(args, _exec, virtualFs) {
+      if (args.justification && !args.sandbox_permissions) {
+        throw new Error(PAIRING_ERROR);
+      }
+      virtualFs.set(args.file_path, args.content);
+      return 'Write succeeded';
+    }
+  });
+
+  try {
+    await host.run('Create computed.txt with intermediate eval');
+    assert.equal(host.errors.length, 0);
+    assert.equal(host.virtualFs.get('computed.txt'), largeText);
+
+    const stats = host.failureRecovery.getStats(host.agent.session);
+    assert.equal(stats.succeeded, 1);
+    assert.equal(stats.invalidated, 0);
+  } finally {
+    await host.dispose();
+  }
+});
+

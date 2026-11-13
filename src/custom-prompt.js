@@ -10,6 +10,20 @@ export const SOURCE = 'optimizer-custom-prompt';
 export const SECTION_NAME = 'optimizer:custom-prompt';
 export const ENVIRONMENT_FACTS_SECTION = 'optimizer:environment-facts';
 export const DEFAULT_SECTION_ORDER = 10300;
+export const OFFICIAL_SECTION_PREFIXES = [
+  'harness:',
+  'deployment:',
+  'tool:',
+  'deliverable:',
+  'web:',
+  'plan:',
+  'team:',
+  'ptc:',
+  'file:',
+  'structured:',
+  'mcp:',
+  'tools:'
+];
 
 export const CustomPromptConfig = z.object({
   enabled: z.boolean().default(true),
@@ -21,9 +35,12 @@ export const CustomPromptConfig = z.object({
   mergeStrategy: z.union(['concat', 'workspace-override', 'global-only', 'workspace-only']).default('concat'),
   hotReload: z.boolean().default(true),
   interpolate: z.boolean().default(false),
-  injectEnvironmentFacts: z.boolean().default(true)
+  injectEnvironmentFacts: z.boolean().default(true),
+  includeCliFacts: z.boolean().default(true),
+  extraEnvironmentFacts: z.array(z.string()).default([]),
+  preserveSections: z.array(z.string()).default([]),
+  stripAllNonOptimizer: z.boolean().default(false)
 });
-
 let cachedPython = undefined;
 
 export function resetPythonCacheForTesting() {
@@ -54,21 +71,34 @@ export function detectPythonEnv(spawnSyncFn = spawnSync) {
 /**
  * Generate compact host environment facts to eliminate exploratory probing turns (pwd, ls, node -v).
  */
-export function formatEnvironmentFacts(processRef = process, pythonDetector = detectPythonEnv) {
+export function formatEnvironmentFacts(processRef = process, pythonDetector = detectPythonEnv, options = {}) {
   const version = processRef?.version || 'unknown';
   const platform = processRef?.platform || 'unknown';
   const arch = processRef?.arch || 'unknown';
   const py = typeof pythonDetector === 'function' ? pythonDetector() : null;
   const pyInfo = py ? `, ${py.version} (${py.bin})` : ' (Python not detected; use Node.js for ad-hoc scripts)';
-  return [
+  const includeCliFacts = options?.includeCliFacts !== false;
+  const lines = [
     '## Host Environment & Tooling Facts',
-    `- Runtime: Node.js ${version}${pyInfo} on ${platform} (${arch}).`,
-    '- Standalone CLIs: playwright-cli, gh, ast-grep, and opencli are standalone binaries via bash; NEVER require/import as node modules.',
-    '- Browser automation: playwright-cli blocks "file:" URLs (serve via loopback HTTP); \'screenshot\' takes selector target ONLY (no output filename; auto-saved to .playwright-cli/). NEVER probe via \'--help\' or \'--version\'.',
+    `- Runtime: Node.js ${version}${pyInfo} on ${platform} (${arch}).`
+  ];
+  if (includeCliFacts) {
+    lines.push(
+      '- Standalone CLIs: playwright-cli, gh, ast-grep, and opencli are standalone binaries via bash; NEVER require/import as node modules.',
+      '- Browser automation: playwright-cli blocks "file:" URLs (serve via loopback HTTP); \'screenshot\' takes selector target ONLY (no output filename; auto-saved to .playwright-cli/). NEVER probe via \'--help\' or \'--version\'.'
+    );
+  }
+  lines.push(
     '- Zero startup probing: workspace context and host facts are already hydrated. NEVER run exploratory probing (pwd, ls, node -v, which).',
-    '- Persistent evaluation: `eval_python` and `eval_node` maintain stateful in-memory kernels across turns without disk pollution (math, re, json, time, collections, itertools pre-imported); prioritize for intermediate math, kinematic solving, and data filtering.',
+    '- Persistent evaluation: `eval_python` and `eval_node` maintain stateful in-memory kernels across turns without disk pollution (math, re, json, time, collections, itertools pre-imported); prioritize for intermediate math, algorithmic/numeric solving, and data filtering.',
     '- Ad-hoc scripts & cleanup: MUST write ad-hoc Node/Python scripts to disk via native write first and execute by file path; remove temporary artifacts directly via bash (rm -rf).'
-  ].join('\n');
+  );
+  if (Array.isArray(options?.extraFacts)) {
+    for (const fact of options.extraFacts) {
+      if (typeof fact === 'string' && fact.trim()) lines.push(fact);
+    }
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -194,15 +224,32 @@ export class CustomPromptManager {
     try {
       const dir = path.dirname(targetPath);
       const filename = path.basename(targetPath);
+      const isWin = process.platform === 'win32';
+      const matchesName = (a, b) => (isWin ? a.toLowerCase() === b.toLowerCase() : a === b);
+
       if (!fs.existsSync(dir)) {
-        // If directory doesn't exist yet, try to create parent or skip until created
+        // Watch nearest existing parent directory (e.g. workspace root before .dsh/ exists)
+        const parentDir = path.dirname(dir);
+        const subDirName = path.basename(dir);
+        if (!fs.existsSync(parentDir) || this.watchers.has(dir)) return;
+        const parentWatcher = fs.watch(parentDir, { persistent: false }, (_eventType, triggerName) => {
+          if (!triggerName || matchesName(triggerName, subDirName)) {
+            if (fs.existsSync(dir)) {
+              try { parentWatcher.close(); } catch {}
+              this.watchers.delete(dir);
+              this.watchPath(targetPath, onChange);
+              onChange();
+            }
+          }
+        });
+        parentWatcher.on('error', () => {});
+        this.watchers.set(dir, parentWatcher);
         return;
       }
 
       const watcher = fs.watch(dir, { persistent: false }, (_eventType, triggerName) => {
-        if (!triggerName || triggerName === filename) {
-          const existingTimer = this.debounceTimers.get(targetPath);
-          if (existingTimer) clearTimeout(existingTimer);
+        if (!triggerName || matchesName(triggerName, filename)) {
+          clearTimeout(this.debounceTimers.get(targetPath));
           this.debounceTimers.set(
             targetPath,
             setTimeout(() => {
@@ -301,10 +348,21 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
     if (!customText) return assembly;
 
     if (config.placement === 'replace-all') {
-      // Retain optimizer's own sections (e.g. convergence guidance) while stripping all official verbose sections
-      const optimizerSections = assembly.sections.filter(
-        s => typeof s.name === 'string' && s.name.startsWith('optimizer:') && s.name !== config.sectionName && s.name !== ENVIRONMENT_FACTS_SECTION
-      );
+      const preservedRules = Array.isArray(config.preserveSections) ? config.preserveSections : [];
+      const isExplicitlyPreserved = (sectionName) => preservedRules.some(rule => (
+        rule.endsWith(':') ? sectionName.startsWith(rule) : sectionName === rule
+      ));
+      const isOfficialSection = (sectionName) => OFFICIAL_SECTION_PREFIXES.some(prefix => sectionName.startsWith(prefix));
+      const isPreserved = (sectionName) => {
+        if (typeof sectionName !== 'string') return false;
+        if (sectionName === config.sectionName || sectionName === ENVIRONMENT_FACTS_SECTION) return false;
+        if (sectionName.startsWith('optimizer:')) return true;
+        if (isExplicitlyPreserved(sectionName)) return true;
+        if (config.stripAllNonOptimizer) return false;
+        return !isOfficialSection(sectionName);
+      };
+      // Retain optimizer's own sections, non-official host sections, and explicitly preserved sections while stripping verbose official sections
+      const preservedSections = assembly.sections.filter(s => isPreserved(s.name));
       const sections = [
         {
           name: config.sectionName,
@@ -315,11 +373,14 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
       if (config.injectEnvironmentFacts) {
         sections.push({
           name: ENVIRONMENT_FACTS_SECTION,
-          text: formatEnvironmentFacts(),
+          text: formatEnvironmentFacts(process, detectPythonEnv, {
+            includeCliFacts: config.includeCliFacts,
+            extraFacts: config.extraEnvironmentFacts
+          }),
           interpolate: false
         });
       }
-      sections.push(...optimizerSections);
+      sections.push(...preservedSections);
       return {
         ...assembly,
         sections
@@ -343,13 +404,14 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
     if (config.injectEnvironmentFacts && !sections.some(s => s.name === ENVIRONMENT_FACTS_SECTION)) {
       sections.push({
         name: ENVIRONMENT_FACTS_SECTION,
-        text: formatEnvironmentFacts(),
+        text: formatEnvironmentFacts(process, detectPythonEnv, {
+          includeCliFacts: config.includeCliFacts,
+          extraFacts: config.extraEnvironmentFacts
+        }),
         interpolate: false
       });
     }
     return { ...assembly, sections };
-
-    return assembly;
   });
 
   if (typeof ctx.effect === 'function') {

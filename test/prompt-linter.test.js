@@ -111,3 +111,22 @@ test('lintPrompt detects CLI require confusion', () => {
   assert.ok(result.issues.some(i => i.ruleId === PROMPT_LINT_RULES.CLI_REQUIRE_CONFUSION));
   assert.ok(result.score < 100);
 });
+
+test('fixPrompt preserves fenced code blocks and marks manual weak modals as non-fixable', () => {
+  const prompt = [
+    '- Please try to be concise.',
+    '```md',
+    '- must stay lowercase inside code fence',
+    '- Bias toward keeping examples untouched',
+    '```'
+  ].join('\n');
+
+  const linted = lintPrompt(prompt);
+  const weakIssues = linted.issues.filter(i => i.ruleId === PROMPT_LINT_RULES.WEAK_MODALS);
+  assert.ok(weakIssues.length >= 2);
+  assert.ok(weakIssues.every(i => i.fixable === false));
+  assert.equal(linted.fixesAvailable, false);
+
+  const fixed = fixPrompt(prompt);
+  assert.equal(fixed, prompt);
+});

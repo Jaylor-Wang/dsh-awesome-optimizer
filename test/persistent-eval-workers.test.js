@@ -304,6 +304,33 @@ globalThis.increment = (step = 1) => {
       assert.equal(res.resultRepr, '0.3');
     });
 
+    test('should preserve top-level declarations when await appears in strings, comments, or async functions', async () => {
+      const res1 = await nodeClient.send({
+        id: 'node-false-await-1',
+        code: `
+// await something in comment
+const note = "await inside string";
+async function helperAsync(v) { return await Promise.resolve(v + 1); }
+let retained = 7;
+`
+      });
+      assert.equal(res1.success, true);
+
+      const res2 = await nodeClient.send({
+        id: 'node-false-await-2',
+        code: 'retained + note.length'
+      });
+      assert.equal(res2.success, true);
+      assert.equal(res2.result, 7 + 'await inside string'.length);
+
+      const res3 = await nodeClient.send({
+        id: 'node-false-await-3',
+        code: 'await helperAsync(41) // trailing comment should compile'
+      });
+      assert.equal(res3.success, true);
+      assert.equal(res3.result, 42);
+    });
+
     test('teardown node worker', () => {
       if (nodeClient) nodeClient.kill();
     });

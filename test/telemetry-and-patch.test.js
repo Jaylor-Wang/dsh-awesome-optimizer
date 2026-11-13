@@ -118,3 +118,24 @@ test('cordis.patch.yml and source files preserve official loop ownership and nev
     assert.doesNotMatch(code, /\.(?:on|waterfall)\(\s*['"]agent\/request['"]/);
   }
 });
+
+test('agentTelemetry detects prefix changes accurately with cached message digests', async () => {
+  const manager = new AgentTelemetryManager({ get: () => undefined });
+  const session = { id: 'sess-prefix-cache' };
+  manager.onSessionEvent(session, { type: 'turn/start', data: { turn: 1 } });
+
+  const msg1 = { role: 'system', content: [{ type: 'text', text: 'sys' }] };
+  const msg2 = { role: 'user', content: [{ type: 'text', text: 'hello' }] };
+
+  async function* emptyStream() {
+    yield { type: 'usage', usage: { inputTokens: 10, outputTokens: 2 } };
+  }
+
+  for await (const _ of manager.wrapStream({ sessionId: 'sess-prefix-cache', messages: [msg1, msg2] }, emptyStream)) {}
+  for await (const _ of manager.wrapStream({ sessionId: 'sess-prefix-cache', messages: [msg1, msg2, { role: 'assistant', content: [] }] }, emptyStream)) {}
+  assert.equal(manager.getSummary(session).prefixChanges, 0);
+
+  const mutatedMsg1 = { role: 'system', content: [{ type: 'text', text: 'sys-changed' }] };
+  for await (const _ of manager.wrapStream({ sessionId: 'sess-prefix-cache', messages: [mutatedMsg1, msg2] }, emptyStream)) {}
+  assert.equal(manager.getSummary(session).prefixChanges, 1);
+});

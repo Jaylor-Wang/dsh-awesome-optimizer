@@ -5,10 +5,25 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-56%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-72%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、持久化 Python/Node 执行内核、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
+
+---
+
+## v2.2.0 版本更新
+
+- **持久化内核生命周期与跨平台加固**：
+  - `StdioWorkerRunner` 在启动失败、提前退出及 `destroy()` 时统一 reject 等待中的启动/排队 Promise，彻底消除进程启动失败挂起。
+  - `DaemonPool` 复用 `detectPythonEnv()` 自动适配 `python` / `python3`（并支持 `pythonCommand` 配置），同时监听 `session/disposed` 防止长会话进程泄漏。
+  - `node_worker.mjs` 改为优先 `vm.Script` 同步预编译，消除字符串/注释/`async` 函数内 `await` 误包 IIFE 导致顶层状态失效的问题，并修复顶层 `await` 末行带行尾注释时的语法报错。
+- **PTC 子调用隔离与策略护栏精度提升**：
+  - `runtimePolicy` 补齐 `edit_batch` / `eval_python` / `eval_node` 分类，隔离 `exec.parent !== undefined` 并发子调用避免 `read_batch` 竞态，支持拦截带中间参数的内联脚本（如 `pwsh -NoProfile -Command`、`python -u -c`），并去除引号内关键字误杀。
+  - `fileMutationPolicy` 由流水线内成功子 `read` 精确记录文件观察状态；`failureRecovery` 将 `eval_python` / `eval_node` 纳入非变更白名单，避免误作废 `retry_failed_write`。
+- **提示词裁剪安全、Linter 与遥测性能优化**：
+  - `customPrompt` 的 `replace-all` 模式默认仅按 `OFFICIAL_SECTION_PREFIXES` 精准剥离官方冗余段，默认保留宿主/第三方 section，新增 `preserveSections`、`includeCliFacts` 与 `extraEnvironmentFacts`，并支持 `.dsh/` 目录延迟创建后的热重载。
+  - `telemetry` 引入 `WeakMap` 消息摘要缓存将前缀比对由 `O(N²)` 降为 `O(N)`；`prompt-linter` 的 `fixPrompt` 跳过代码块并修正 `fixable` 标记。
 
 ---
 

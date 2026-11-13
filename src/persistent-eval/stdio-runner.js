@@ -51,13 +51,26 @@ export class StdioWorkerRunner {
   }
 
   ensureStarted() {
+    if (this.isDestroyed) {
+      return Promise.reject(new Error('Worker runner has been destroyed.'));
+    }
     if (this.child && !this.child.killed && this.isReady) {
       return Promise.resolve();
     }
     if (this.child && !this.child.killed && !this.isReady) {
-      return new Promise(resolve => this.readyWaiters.push(resolve));
+      return new Promise((resolve, reject) => this.readyWaiters.push({ resolve, reject }));
     }
     return this._spawnProcess();
+  }
+
+  _resolveReadyWaiters() {
+    const waiters = this.readyWaiters.splice(0, this.readyWaiters.length);
+    for (const w of waiters) w.resolve();
+  }
+
+  _rejectReadyWaiters(err) {
+    const waiters = this.readyWaiters.splice(0, this.readyWaiters.length);
+    for (const w of waiters) w.reject(err);
   }
 
   _spawnProcess() {
@@ -65,7 +78,7 @@ export class StdioWorkerRunner {
     this.isReady = false;
 
     return new Promise((resolve, reject) => {
-      this.readyWaiters.push(resolve);
+      this.readyWaiters.push({ resolve, reject });
 
       try {
         const mergedEnv = {
@@ -105,7 +118,10 @@ export class StdioWorkerRunner {
           this._handleProcessExit(code, signal);
         });
       } catch (err) {
-        reject(err);
+        this.isReady = false;
+        this.child = null;
+        this.rl = null;
+        this._rejectReadyWaiters(err);
       }
     });
   }
@@ -123,8 +139,7 @@ export class StdioWorkerRunner {
 
     if (parsed.status === 'ready' && !this.isReady) {
       this.isReady = true;
-      const waiters = this.readyWaiters.splice(0, this.readyWaiters.length);
-      for (const w of waiters) w();
+      this._resolveReadyWaiters();
       if (!this.currentTask && this.pendingQueue.length === 0) {
         this._unref();
       }
@@ -159,6 +174,13 @@ export class StdioWorkerRunner {
   }
 
   _handleProcessFailure(err) {
+    this.isReady = false;
+    if (this.rl) {
+      try { this.rl.close(); } catch {}
+      this.rl = null;
+    }
+    this.child = null;
+    this._rejectReadyWaiters(err);
     if (this.currentTask) {
       const task = this.currentTask;
       this.currentTask = null;
@@ -169,9 +191,19 @@ export class StdioWorkerRunner {
   }
 
   _handleProcessExit(code, signal) {
+    const wasReady = this.isReady;
     this.isReady = false;
+    if (this.rl) {
+      try { this.rl.close(); } catch {}
+      this.rl = null;
+    }
     this.child = null;
-    this.rl = null;
+
+    if (!wasReady && this.readyWaiters.length > 0) {
+      this._rejectReadyWaiters(
+        new Error(`Worker process exited before ready (code: ${code}, signal: ${signal}).`)
+      );
+    }
 
     if (this.currentTask) {
       const task = this.currentTask;
@@ -289,8 +321,19 @@ export class StdioWorkerRunner {
 
   destroy() {
     this.isDestroyed = true;
-    if (this.currentTask && this.currentTask.timeoutTimer) {
-      clearTimeout(this.currentTask.timeoutTimer);
+    this.isReady = false;
+    const destroyErr = new Error('Worker runner has been destroyed.');
+    if (this.currentTask) {
+      if (this.currentTask.timeoutTimer) {
+        clearTimeout(this.currentTask.timeoutTimer);
+      }
+      this.currentTask.reject(destroyErr);
+      this.currentTask = null;
+    }
+    this._rejectReadyWaiters(destroyErr);
+    const pending = this.pendingQueue.splice(0, this.pendingQueue.length);
+    for (const task of pending) {
+      task.reject(destroyErr);
     }
     if (this.rl) {
       try { this.rl.close(); } catch {}
@@ -298,7 +341,5 @@ export class StdioWorkerRunner {
     }
     this._forceKill();
     this.child = null;
-    this.pendingQueue = [];
-    this.currentTask = null;
   }
 }

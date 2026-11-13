@@ -11,6 +11,7 @@ export interface RuntimePolicyOptions {
   maxShellCommandBytes?: number;
   maxInlineScriptBytes?: number;
   disallowChainedNetworkCommands?: boolean;
+  disallowChainedHeavyCommands?: boolean;
 }
 
 export interface ToolFingerprintInput {

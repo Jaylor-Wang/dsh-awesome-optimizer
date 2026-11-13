@@ -11,7 +11,8 @@ export const RuntimePolicyConfig = z.object({
   minLargeWriteBytes: z.number().step(1).min(1).default(8192),
   maxShellCommandBytes: z.number().step(1).min(256).default(4096),
   maxInlineScriptBytes: z.number().step(1).min(128).default(512),
-  disallowChainedNetworkCommands: z.boolean().default(true)
+  disallowChainedNetworkCommands: z.boolean().default(true),
+  disallowChainedHeavyCommands: z.boolean()
 });
 
 /**
@@ -108,6 +109,17 @@ export function classifyToolCall(name, args = {}, cwd = '') {
     const newLen = typeof args.new_string === 'string' ? Buffer.byteLength(args.new_string, 'utf8') : 0;
     const oldLen = typeof args.old_string === 'string' ? Buffer.byteLength(args.old_string, 'utf8') : 0;
     byteLength = newLen + oldLen;
+  } else if (name === 'edit_batch') {
+    opClass = 'edit';
+    const items = Array.isArray(args.edits) ? args.edits : [];
+    targetPath = Array.from(new Set(
+      items.map(item => (typeof item?.file_path === 'string' ? item.file_path : '')).filter(Boolean)
+    )).join(',');
+    byteLength = items.reduce((sum, item) => {
+      const newLen = typeof item?.new_string === 'string' ? Buffer.byteLength(item.new_string, 'utf8') : 0;
+      const oldLen = typeof item?.old_string === 'string' ? Buffer.byteLength(item.old_string, 'utf8') : 0;
+      return sum + newLen + oldLen;
+    }, 0);
   } else if (name === 'read' || name === 'read_image') {
     opClass = 'read';
     targetPath = typeof args.file_path === 'string' ? args.file_path : '';
@@ -118,6 +130,12 @@ export function classifyToolCall(name, args = {}, cwd = '') {
   } else if (name === 'glob' || name === 'grep') {
     opClass = 'search';
     targetPath = typeof args.path === 'string' ? args.path : '';
+  } else if (name === 'eval_python' || name === 'eval_node') {
+    opClass = 'eval';
+    targetPath = args.reset ? 'reset' : 'kernel';
+    if (typeof args.code === 'string') {
+      byteLength = Buffer.byteLength(args.code, 'utf8');
+    }
   } else if (name === 'bash') {
     opClass = 'shell';
     targetPath = typeof args.workdir === 'string' ? args.workdir : (cwd || '');
@@ -125,7 +143,6 @@ export function classifyToolCall(name, args = {}, cwd = '') {
       byteLength = Buffer.byteLength(args.command, 'utf8');
     }
   }
-
   return { name, opClass, targetPath, byteLength };
 }
 
@@ -203,7 +220,7 @@ export class RuntimePolicyManager {
   }
 
   recordExecution(session, exec, result) {
-    if (!session || !exec) return null;
+    if (!session || !exec || exec.parent !== undefined) return null;
     const existing = this.sessionStates.get(session);
     const state = existing ?? this.stateFor(session, 1);
     if (!state) return null;
@@ -299,7 +316,7 @@ export class RuntimePolicyManager {
   }
 
   evaluatePreExecute(session, exec) {
-    if (this.config.mode !== 'enforce' || !session || !exec) return { kind: 'allow' };
+    if (this.config.mode !== 'enforce' || !session || !exec || exec.parent !== undefined) return { kind: 'allow' };
     const state = this.stateFor(session);
     if (!state) return { kind: 'allow' };
     const classified = classifyToolCall(exec.name, exec.arguments, state.cwd);
@@ -318,8 +335,12 @@ export class RuntimePolicyManager {
     if (name === 'bash' && exec.arguments && typeof exec.arguments.command === 'string') {
       const cmd = exec.arguments.command;
       const cmdBytes = Buffer.byteLength(cmd, 'utf8');
-      const isHeredoc = /(?:cat|type)\s*<<\s*['"]?EOF/i.test(cmd);
-      const isInlineScript = /(?:python|python3|node|pwsh|powershell)\s+(?:-c|-e|-Command)\s+['"][\s\S]+/i.test(cmd);
+      // Strip quoted string literals to prevent false positives in commit messages / echo args
+      const unquoted = cmd
+        .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, '""')
+        .replace(/'[^'\\]*(?:\\.[^'\\]*)*'/g, "''");
+      const isHeredoc = /(?:^|[\s;&|])(?:cat|type)\s*<<\s*(?:''|""|[A-Za-z_])/i.test(unquoted);
+      const isInlineScript = /(?:^|[\s;&|])(?:python|python3|node|pwsh|powershell)(?:\s+-[\w-]+)*\s+(?:-c|-e|-Command)\s+(?:""|''|\S)/i.test(unquoted);
 
       const maxBytes = this.config.maxShellCommandBytes ?? 4096;
       const maxScriptBytes = this.config.maxInlineScriptBytes ?? 512;
@@ -355,7 +376,8 @@ export class RuntimePolicyManager {
       }
 
       // Guard against blocked file:// URLs in playwright-cli
-      const isPlaywrightFileUrl = /\bplaywright-cli\s+(?:open|goto)\s+['"]?file:/i.test(cmd);
+      const isPlaywrightCmd = /(?:^|[\s;&|])playwright-cli\b/i.test(unquoted);
+      const isPlaywrightFileUrl = isPlaywrightCmd && /\bplaywright-cli\s+(?:open|goto)\s+['"]?file:/i.test(cmd);
       if (isPlaywrightFileUrl) {
         state.shellPayloadBlocks++;
         state.policyDenials++;
@@ -372,11 +394,10 @@ export class RuntimePolicyManager {
       }
 
       // Guard against dangerous heavy concurrent or publishing command chaining on Windows
-      if (this.config.disallowChainedNetworkCommands) {
-        const hasCompoundOperator = /(&&|;)/.test(cmd);
+      const blockChainedHeavy = this.config.disallowChainedHeavyCommands ?? this.config.disallowChainedNetworkCommands;
+      if (blockChainedHeavy) {
+        const hasCompoundOperator = /(&&|;)/.test(unquoted);
         if (hasCompoundOperator) {
-          // Strip quoted string literals to prevent false positives in commit messages / echo args
-          const unquoted = cmd.replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, '""').replace(/'[^'\\]*(?:\\.[^'\\]*)*'/g, "''");
           const hasBlockedCompoundAction = /(?:^|[\s;&|])(?:npm\s+(?:test|t|run\s+build|publish)|vitest)\b/i.test(unquoted);
           if (hasBlockedCompoundAction) {
             state.shellPayloadBlocks++;

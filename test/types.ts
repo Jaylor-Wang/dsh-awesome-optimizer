@@ -10,18 +10,20 @@ import mutationPlugin, { type FileMutationPolicyOptions } from 'dsh-awesome-opti
 import recoveryPlugin, { type FailureRecoveryOptions } from 'dsh-awesome-optimizer/recovery';
 import compositePlugin, { type CompositeToolsOptions } from 'dsh-awesome-optimizer/composite-tools';
 import convergencePlugin, { type ConvergenceOptions } from 'dsh-awesome-optimizer/convergence';
+import customPromptPlugin, { type CustomPromptOptions } from 'dsh-awesome-optimizer/custom-prompt';
+import { applyPersistentEval, type PersistentEvalOptions } from 'dsh-awesome-optimizer/persistent-eval';
 import telemetryPlugin, { type TelemetryOptions } from 'dsh-awesome-optimizer/telemetry';
-
 const config: AgentOptimizerConfig = {
   enabled: true,
   runtimePolicy: { mode: 'enforce', noProgressLimit: 2, maxShellCommandBytes: 4096, maxInlineScriptBytes: 512 },
   fileMutationPolicy: { mode: 'observe', minLargeWriteBytes: 8192 },
   recoverFailedWrites: true,
   compositeTools: { enabled: true, readBatch: true, maxBatchFiles: 10 },
+  persistentEval: { enabled: true, python: true, node: true, timeoutMs: 15000 },
   convergence: { enabled: true, injectGuidance: true, softStepBudget: 8 },
+  customPrompt: { enabled: true, placement: 'replace-all', preserveSections: ['skills:'] },
   telemetry: { enabled: true, trackStreams: true }
 };
-
 const plugins: Plugin[] = [
   optimizer,
   policyPlugin,
@@ -29,9 +31,9 @@ const plugins: Plugin[] = [
   recoveryPlugin,
   compositePlugin,
   convergencePlugin,
+  customPromptPlugin,
   telemetryPlugin
 ];
-
 const convergenceNotice: MessageSource = {
   kind: 'optimizer-convergence',
   form: 'notice',
@@ -55,17 +57,22 @@ const subConfigs: [
   FileMutationPolicyOptions,
   FailureRecoveryOptions,
   CompositeToolsOptions,
+  PersistentEvalOptions,
   ConvergenceOptions,
+  CustomPromptOptions,
   TelemetryOptions
 ] = [
-  { mode: 'enforce' },
+  { mode: 'enforce', disallowChainedHeavyCommands: true },
   { mode: 'observe' },
   { enabled: true },
   { maxBatchFiles: 8 },
+  { pythonCommand: 'python3', timeoutMs: 5000 },
   { softStepBudget: 6 },
+  { placement: 'replace-all', preserveSections: ['mcp:'] },
   { trackStreams: true }
 ];
 
+void applyPersistentEval;
 void config;
 void plugins;
 void convergenceNotice;

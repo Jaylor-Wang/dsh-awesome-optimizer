@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { detectPythonEnv } from '../custom-prompt.js';
 import { StdioWorkerRunner } from './stdio-runner.js';
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -36,8 +36,9 @@ export class DaemonPool {
     }
 
     if (!sessionMap.python || sessionMap.python.isDestroyed) {
+      const pythonBin = this.config.pythonCommand || detectPythonEnv()?.bin || 'python';
       sessionMap.python = new StdioWorkerRunner({
-        command: 'python',
+        command: pythonBin,
         args: ['-u', PY_WORKER_SCRIPT],
         timeoutMs: this.config.timeoutMs,
         maxOutputBytes: this.config.maxOutputBytes

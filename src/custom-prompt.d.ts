@@ -7,6 +7,7 @@ export declare const SOURCE: 'optimizer-custom-prompt';
 export declare const SECTION_NAME: 'optimizer:custom-prompt';
 export declare const ENVIRONMENT_FACTS_SECTION: 'optimizer:environment-facts';
 export declare const DEFAULT_SECTION_ORDER = 10300;
+export declare const OFFICIAL_SECTION_PREFIXES: readonly string[];
 
 export type MergeStrategy = 'concat' | 'workspace-override' | 'global-only' | 'workspace-only';
 export type PlacementMode = 'replace-all' | 'suffix';
@@ -22,6 +23,10 @@ export interface CustomPromptOptions {
   hotReload?: boolean;
   interpolate?: boolean;
   injectEnvironmentFacts?: boolean;
+  includeCliFacts?: boolean;
+  extraEnvironmentFacts?: string[];
+  preserveSections?: string[];
+  stripAllNonOptimizer?: boolean;
 }
 
 export interface PythonEnvInfo {
@@ -33,7 +38,11 @@ export declare const CustomPromptConfig: z<CustomPromptOptions>;
 
 export declare function detectPythonEnv(spawnSyncFn?: any): PythonEnvInfo | null;
 export declare function resetPythonCacheForTesting(): void;
-export declare function formatEnvironmentFacts(processRef?: any, pythonDetector?: () => PythonEnvInfo | null): string;
+export declare function formatEnvironmentFacts(
+  processRef?: { version?: string; platform?: string; arch?: string },
+  pythonDetector?: () => PythonEnvInfo | null,
+  options?: { includeCliFacts?: boolean; extraFacts?: string[] }
+): string;
 
 export declare function resolveDshHome(env?: NodeJS.ProcessEnv): string;
 export declare function resolveGlobalPath(filePath?: string, env?: NodeJS.ProcessEnv): string;

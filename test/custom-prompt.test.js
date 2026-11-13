@@ -249,3 +249,96 @@ test('detectPythonEnv safely detects and caches python or handles missing runtim
   // Restore live cache
   resetPythonCacheForTesting();
 });
+
+test('customPrompt replace-all strips official prefixes while preserving host/plugin and preserveSections overrides', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-custom-preserve-test-'));
+  const globalFile = path.join(tempDir, 'SYSTEM.md');
+  fs.writeFileSync(globalFile, 'CUSTOM_CORE_PROMPT', 'utf8');
+
+  const host = await createTestRuntime({
+    optimizerConfig: {
+      customPrompt: {
+        enabled: true,
+        globalFile,
+        placement: 'replace-all',
+        includeCliFacts: false,
+        preserveSections: ['mcp:'],
+        hotReload: false
+      }
+    },
+    configureTools(ctx) {
+      ctx.systemPrompt.section({
+        name: 'skills:catalog',
+        order: 500,
+        text: 'PRESERVED_SKILL_CATALOG',
+        interpolate: false
+      });
+      ctx.systemPrompt.section({
+        name: 'mcp:servers',
+        order: 510,
+        text: 'PRESERVED_MCP_SECTION',
+        interpolate: false
+      });
+      ctx.systemPrompt.section({
+        name: 'tool:bash',
+        order: 1000,
+        text: 'STRIPPED_TOOL_SECTION',
+        interpolate: false
+      });
+    },
+    script: [[{ type: 'text', text: 'Done.' }]]
+  });
+
+  try {
+    await host.run('Check preserveSections');
+    const promptText = extractPromptText(host.requests[0]);
+    assert.match(promptText, /CUSTOM_CORE_PROMPT/);
+    assert.match(promptText, /PRESERVED_SKILL_CATALOG/);
+    assert.match(promptText, /PRESERVED_MCP_SECTION/);
+    assert.doesNotMatch(promptText, /STRIPPED_TOOL_SECTION/);
+    assert.doesNotMatch(promptText, /Standalone CLIs: playwright-cli/);
+  } finally {
+    await host.dispose();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('customPrompt hot-reloads workspace .dsh/SYSTEM.md even when .dsh directory is created later', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-custom-deferred-dir-'));
+  const globalFile = path.join(tempDir, 'global.md');
+  const wsDir = path.join(tempDir, 'workspace');
+  fs.mkdirSync(wsDir, { recursive: true });
+  fs.writeFileSync(globalFile, 'GLOBAL_BASE', 'utf8');
+
+  const host = await createTestRuntime({
+    workingDirectory: wsDir,
+    optimizerConfig: {
+      customPrompt: {
+        enabled: true,
+        globalFile,
+        workspaceFile: '.dsh/SYSTEM.md',
+        placement: 'suffix',
+        hotReload: true
+      }
+    },
+    script: [
+      [{ type: 'text', text: 'Turn 1' }],
+      [{ type: 'text', text: 'Turn 2' }]
+    ]
+  });
+
+  try {
+    await host.run('Turn 1');
+    assert.doesNotMatch(extractPromptText(host.requests[0]), /DEFERRED_WS_PROMPT/);
+
+    fs.mkdirSync(path.join(wsDir, '.dsh'), { recursive: true });
+    fs.writeFileSync(path.join(wsDir, '.dsh/SYSTEM.md'), 'DEFERRED_WS_PROMPT', 'utf8');
+    await new Promise(r => setTimeout(r, 150));
+
+    await host.run('Turn 2');
+    assert.match(extractPromptText(host.requests[1]), /DEFERRED_WS_PROMPT/);
+  } finally {
+    await host.dispose();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});

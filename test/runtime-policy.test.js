@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createTestRuntime, call } from './support/runtime.js';
-import { normalizePath, sizeBucket, computeFingerprint } from '../src/runtime-policy.js';
-
+import { normalizePath, sizeBucket, computeFingerprint, classifyToolCall } from '../src/runtime-policy.js';
 test('normalizePath and computeFingerprint produce deterministic values across platforms', () => {
   assert.equal(normalizePath('E:\\Github\\Foo\\bar.js'), 'e:/github/foo/bar.js');
   assert.equal(normalizePath('src\\Foo\\index.js', 'E:\\Github\\Repo'), 'e:/github/repo/src/foo/index.js');
@@ -193,6 +192,66 @@ test('runtimePolicy blocks playwright-cli commands using file: protocol', async 
 
     const summary = host.runtimePolicy.getSummary(host.agent.session);
     assert.equal(summary.shellPayloadBlocks, 1);
+  } finally {
+    await host.dispose();
+  }
+});
+
+test('classifyToolCall classifies edit_batch, eval_python, and eval_node accurately', () => {
+  const eb = classifyToolCall('edit_batch', {
+    edits: [
+      { file_path: 'a.js', old_string: 'old1', new_string: 'new1' },
+      { file_path: 'b.js', old_string: 'old2', new_string: 'new22' }
+    ]
+  });
+  assert.equal(eb.opClass, 'edit');
+  assert.equal(eb.targetPath, 'a.js,b.js');
+  assert.equal(eb.byteLength, 17);
+
+  const ep = classifyToolCall('eval_python', { code: 'print(123)' });
+  assert.equal(ep.opClass, 'eval');
+  assert.equal(ep.targetPath, 'kernel');
+  assert.equal(ep.byteLength, 10);
+
+  const en = classifyToolCall('eval_node', { code: '1+1', reset: true });
+  assert.equal(en.opClass, 'eval');
+  assert.equal(en.targetPath, 'reset');
+  assert.equal(en.byteLength, 3);
+});
+
+test('runtimePolicy isolates nested read_batch sub-calls and guards flagged inline scripts without false positives in quotes', async () => {
+  const flaggedInline = `pwsh -NoProfile -Command "${'Write-Output 1; '.repeat(40)}"`;
+  const safeCommit = 'git commit -m "docs: node -e \'x\' and cat << EOF and playwright-cli open file:///tmp/a.html"';
+
+  const host = await createTestRuntime({
+    files: {
+      'ok.txt': 'hello'
+    },
+    optimizerConfig: {
+      runtimePolicy: { mode: 'enforce', noProgressLimit: 2, maxInlineScriptBytes: 512 }
+    },
+    script: [
+      [call('rb1', 'read_batch', {
+        files: [
+          { file_path: 'ok.txt' },
+          { file_path: 'missing1.txt' },
+          { file_path: 'missing2.txt' }
+        ]
+      })],
+      [call('b_inline', 'bash', { command: flaggedInline })],
+      [call('b_commit', 'bash', { command: safeCommit })],
+      [{ type: 'text', text: 'Finished safely.' }]
+    ]
+  });
+
+  try {
+    await host.run('Verify isolation and shell quoting');
+    assert.equal(host.errors.length, 0);
+    const summary = host.runtimePolicy.getSummary(host.agent.session);
+    assert.equal(summary.noProgressHits, 0);
+    assert.equal(summary.shellPayloadBlocks, 1);
+    assert.ok(host.calls.some(c => c.id === 'b_commit'));
+    assert.ok(!host.calls.some(c => c.id === 'b_inline'));
   } finally {
     await host.dispose();
   }
