@@ -340,6 +340,7 @@ export class StdioWorkerRunner {
     const payload = {
       id,
       action: options.action || 'eval',
+      cwd: options.cwd,
       code: code || '',
       reset: Boolean(options.reset)
     };

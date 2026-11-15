@@ -78,18 +78,38 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
     maxOutputBytes: config.maxOutputBytes
   });
 
+  const workingDirectories = new Map();
+  const sessionKey = session => session?.id || session || '__global__';
+  function getWorkingDirectory(session) {
+    const key = sessionKey(session);
+    if (!workingDirectories.has(key)) {
+      const service = typeof ctx.get === 'function' ? ctx.get('workingDirectory') : ctx.workingDirectory;
+      const cwd = service?.get?.(session);
+      if (cwd !== undefined) workingDirectories.set(key, cwd);
+    }
+    return workingDirectories.get(key);
+  }
+  function destroySession(session) {
+    workingDirectories.delete(sessionKey(session));
+    pool.destroySession(session);
+  }
+  function destroy() {
+    workingDirectories.clear();
+    pool.destroyAll();
+  }
+
   // Clean up session workers when session ends & prewarm on session/turn starts
   ctx.on('session/event', (session, event) => {
     if (event?.type === 'session/destroy' || event?.type === 'session/close') {
-      pool.destroySession(session);
+      destroySession(session);
+    } else if (event?.type === 'working-directory/change') {
+      workingDirectories.set(sessionKey(session), event.data.cwd);
     } else if (event?.type === 'turn/start' || event?.type === 'session/start' || event?.type === 'session/create') {
       pool.prewarm(session, { python: config.python, node: config.node });
     }
   });
 
-  ctx.on('session/disposed', (session) => {
-    pool.destroySession(session);
-  });
+  ctx.on('session/disposed', destroySession);
 
   // Pre-warm on turn/start event so worker processes are already hot during model inference
   ctx.on('turn/start', (turn) => {
@@ -98,9 +118,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
   });
   // Clean up all daemon workers when plugin context is disposed
   if (typeof ctx.effect === 'function') {
-    ctx.effect(() => () => {
-      pool.destroyAll();
-    });
+    ctx.effect(() => destroy);
   }
 
   if (config.python) {
@@ -109,8 +127,9 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
       description: [
         'Execute Python code inside a persistent stateful kernel.',
         'Variables, functions, imports, and state persist across calls within the session.',
-        'Standard modules (math, re, json, time, collections, itertools) are eagerly pre-imported in scope.',
-        'Use for exploratory calculations, data processing, kinematic/algorithmic solving, and intermediate analysis without writing temp files to disk.'
+        'Standard modules (math, re, json, time, collections, itertools, pathlib, difflib, csv) are eagerly pre-imported in scope.',
+        'The session working directory is synchronized before execution and exposed as CWD.',
+        'Use for exploratory calculations, data processing, and read-only project analysis (e.g. i18n key alignment or code metrics); return compact summaries without writing temp files to disk.'
       ].join(' '),
       parameters: {
         type: 'object',
@@ -140,6 +159,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
         const reset = Boolean(args?.reset);
 
         const response = await runner.execute(code, {
+          cwd: getWorkingDirectory(session),
           reset,
           timeoutMs: config.timeoutMs,
           signal: exec?.signal
@@ -155,6 +175,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
       description: [
         'Execute JavaScript code inside a persistent stateful Node.js VM context.',
         'Top-level declarations persist across synchronous calls; when using top-level await, assign shared state to globalThis (e.g. globalThis.x = await ...) to persist across turns.',
+        'The session working directory is synchronized before execution and exposed as CWD.',
         'Use for rapid expression evaluation, AST exploration, and data transformations without writing temp files to disk.'
       ].join(' '),
       parameters: {
@@ -185,6 +206,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
         const reset = Boolean(args?.reset);
 
         const response = await runner.execute(code, {
+          cwd: getWorkingDirectory(session),
           reset,
           timeoutMs: config.timeoutMs,
           signal: exec?.signal
@@ -200,8 +222,6 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
     prewarm(session) {
       return pool.prewarm(session, { python: config.python, node: config.node });
     },
-    destroy() {
-      pool.destroyAll();
-    }
+    destroy
   };
 }

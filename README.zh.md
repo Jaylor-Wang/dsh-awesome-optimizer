@@ -5,12 +5,19 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-98%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、持久化 Python/Node 执行内核、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
+
+## v3.1.0 工作区感知与工程分析增强
+
+- **持久化 eval 工作区同步**：Python / Node worker 通过每次执行请求同步会话工作目录，并注入 `CWD`。目录变化保留用户状态；无效目录会在 reset 或用户代码执行前报错。取消和超时重启后恢复请求目录。
+- **Python 工程分析标准库**：在已有标准库基础上预导入 `pathlib`、`difflib`、`csv`，reset 后同样可用。支持通过相对路径进行 i18n key 对齐等项目核查，并返回紧凑摘要。
+- **精简 Python 异常栈**：剥离 worker 内部帧，保留 `<eval_kernel>` 位置、库调用帧、语法错误源码与指示位置，以及异常链和异常组。
+- **验证**：98 项测试通过，覆盖会话隔离、排队目录切换、中文路径、相对路径文件分析及 worker 恢复；公开声明类型检查通过。
 
 ## v3.0.0 架构减法与精准定位升级
 

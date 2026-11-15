@@ -45,6 +45,8 @@ export interface StdioWorkerRunnerOptions {
 
 export interface StdioWorkerExecuteOptions {
   action?: 'eval' | 'ping' | 'reset';
+  /** Session working directory to apply before reset or evaluation. */
+  cwd?: string;
   reset?: boolean;
   timeoutMs?: number;
   signal?: AbortSignal;

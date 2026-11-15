@@ -5,12 +5,19 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-98%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 High-performance runtime policy guards, persistent Python & Node evaluation daemons, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
+
+## Highlights in v3.1.0
+
+- **Workspace-aware persistent eval**: Python and Node workers synchronize the session working directory through each execution request and expose it as `CWD`. Directory changes preserve user state; invalid directories stop execution before reset or user code. Cancellation and timeout recovery restore the requested directory.
+- **Python project analysis modules**: `pathlib`, `difflib`, and `csv` are pre-imported alongside the existing standard modules, including after reset. Use relative paths for project checks such as i18n key alignment and return compact summaries.
+- **Compact Python diagnostics**: Removes worker implementation frames while preserving `<eval_kernel>` locations, library frames, syntax error source/carets, exception chains, and exception groups.
+- **Verification**: 98 tests passed, including session isolation, queued directory changes, Unicode paths, relative file analysis, and worker recovery; public declaration type checking passed.
 
 ## Highlights in v3.0.0
 

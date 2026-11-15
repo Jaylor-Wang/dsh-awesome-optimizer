@@ -84,6 +84,7 @@ const subConfigs: [
 
 const workerExecOptions: StdioWorkerExecuteOptions = {
   action: 'eval',
+  cwd: '/workspace/project',
   reset: false,
   timeoutMs: 1000,
   signal: new AbortController().signal

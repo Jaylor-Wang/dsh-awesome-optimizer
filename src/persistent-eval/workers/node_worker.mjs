@@ -8,9 +8,11 @@ import readline from 'node:readline';
 import vm from 'node:vm';
 import util from 'node:util';
 import process from 'node:process';
+import path from 'node:path';
 
 function createFreshContext() {
   const sandbox = {
+    CWD: process.cwd(),
     setTimeout,
     clearTimeout,
     setInterval,
@@ -191,21 +193,6 @@ function main() {
       return;
     }
 
-    if (action === 'reset' || shouldReset) {
-      CURRENT_CONTEXT = createFreshContext();
-      if (action === 'reset') {
-        sendFrame({
-          id: reqId,
-          success: true,
-          stdout: '',
-          stderr: '',
-          result: 'Node VM context reset successfully.',
-          executionTimeMs: 0
-        });
-        return;
-      }
-    }
-
     let stdoutBuf = '';
     let stderrBuf = '';
 
@@ -232,7 +219,20 @@ function main() {
     let rawResult;
 
     try {
-      rawResult = await executeInContext(code, CURRENT_CONTEXT);
+      if (Object.hasOwn(req, 'cwd')) {
+        if (typeof req.cwd !== 'string' || !path.isAbsolute(req.cwd)) {
+          throw new TypeError('cwd must be an absolute directory path');
+        }
+        process.chdir(req.cwd);
+      }
+      if (action === 'reset' || shouldReset) {
+        CURRENT_CONTEXT = createFreshContext();
+        CURRENT_CONTEXT.console = customConsole;
+      }
+      CURRENT_CONTEXT.CWD = process.cwd();
+      rawResult = action === 'reset'
+        ? 'Node VM context reset successfully.'
+        : await executeInContext(code, CURRENT_CONTEXT);
     } catch (err) {
       success = false;
       errorMsg = err instanceof Error ? err.stack || err.message : String(err);

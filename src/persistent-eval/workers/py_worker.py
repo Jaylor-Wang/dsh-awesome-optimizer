@@ -16,13 +16,16 @@ import math
 import re
 import collections
 import itertools
+import pathlib
+import difflib
+import csv
 
 # Ensure strict UTF-8 stdio streams with line buffering
-if hasattr(sys.stdin, "reconfigure"):
+if isinstance(sys.stdin, io.TextIOWrapper):
     sys.stdin.reconfigure(encoding="utf-8", errors="replace")
-if hasattr(sys.stdout, "reconfigure"):
+if isinstance(sys.stdout, io.TextIOWrapper):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-if hasattr(sys.stderr, "reconfigure"):
+if isinstance(sys.stderr, io.TextIOWrapper):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 # Keep handles to original standard streams for JSON protocol frames
@@ -40,6 +43,10 @@ def create_fresh_scope():
         "time": time,
         "collections": collections,
         "itertools": itertools,
+        "pathlib": pathlib,
+        "difflib": difflib,
+        "csv": csv,
+        "CWD": os.getcwd(),
     }
 
 GLOBAL_SCOPE = create_fresh_scope()
@@ -54,7 +61,8 @@ def execute_code(code, scope):
     if not code_stripped:
         return None
 
-    parsed = ast.parse(code, filename="<eval_kernel>", mode="exec")
+    parsed = compile(code, filename="<eval_kernel>", mode="exec", flags=ast.PyCF_ONLY_AST)
+    assert isinstance(parsed, ast.Module)
     if not parsed.body:
         return None
 
@@ -93,8 +101,29 @@ def serialize_result(result):
         # Fall back to string representation
         return result_repr, result_repr
 
+def print_user_traceback(ex, stream):
+    """Hide worker frames without discarding user frames or exception metadata."""
+    diagnostic = traceback.TracebackException.from_exception(ex)
+    pending = [diagnostic]
+    seen = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        current.stack = traceback.StackSummary.from_list(
+            frame for frame in current.stack if frame.filename != __file__
+        )
+        for linked in (current.__cause__, current.__context__):
+            if linked is not None:
+                pending.append(linked)
+        pending.extend(getattr(current, "exceptions", None) or [])
+    diagnostic.print(file=stream)
+
+
 def main():
     global GLOBAL_SCOPE
+    assert REAL_STDIN is not None and REAL_STDOUT is not None, "Worker requires stdio pipes"
 
     # Signal ready frame on startup
     ready_frame = json.dumps({"status": "ready", "pid": os.getpid()}, ensure_ascii=False) + "\n"
@@ -138,22 +167,6 @@ def main():
             REAL_STDOUT.buffer.flush()
             continue
 
-        if action == "reset" or should_reset:
-            GLOBAL_SCOPE = create_fresh_scope()
-            if action == "reset":
-                resp = {
-                    "id": req_id,
-                    "success": True,
-                    "stdout": "",
-                    "stderr": "",
-                    "result": "Kernel namespace reset successfully.",
-                    "executionTimeMs": 0
-                }
-                frame = json.dumps(resp, ensure_ascii=False) + "\n"
-                REAL_STDOUT.buffer.write(frame.encode("utf-8"))
-                REAL_STDOUT.buffer.flush()
-                continue
-
         captured_stdout = io.StringIO()
         captured_stderr = io.StringIO()
         old_stdout = sys.stdout
@@ -168,13 +181,23 @@ def main():
         result_repr = None
 
         try:
-            raw_result = execute_code(code, GLOBAL_SCOPE)
-            result_val, result_repr = serialize_result(raw_result)
+            if "cwd" in req:
+                cwd = req["cwd"]
+                if not isinstance(cwd, str) or not os.path.isabs(cwd):
+                    raise ValueError("cwd must be an absolute directory path")
+                os.chdir(cwd)
+            if action == "reset" or should_reset:
+                GLOBAL_SCOPE = create_fresh_scope()
+            GLOBAL_SCOPE["CWD"] = os.getcwd()
+            if action == "reset":
+                result_val = "Kernel namespace reset successfully."
+            else:
+                raw_result = execute_code(code, GLOBAL_SCOPE)
+                result_val, result_repr = serialize_result(raw_result)
         except Exception as ex:
             success = False
             error_msg = str(ex)
-            # Write traceback into captured_stderr
-            traceback.print_exc(file=captured_stderr)
+            print_user_traceback(ex, captured_stderr)
         finally:
             elapsed_ms = round((time.perf_counter() - start_time) * 1000, 3)
             sys.stdout = old_stdout

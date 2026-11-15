@@ -172,6 +172,59 @@ f"【{title}】动画计算完成"
       assert.ok(checkRes.error.includes("'radius' is not defined"));
     });
 
+    test('should preserve user and library frames while hiding worker frames', async () => {
+      const res = await pyClient.send({
+        id: 'py-user-trace',
+        code: 'def outer():\n    return inner()\ndef inner():\n    return json.loads("{")\nouter()'
+      });
+      assert.equal(res.success, false);
+      assert.match(res.stderr, /File "<eval_kernel>", line 5/);
+      assert.match(res.stderr, /File "<eval_kernel>", line 2, in outer/);
+      assert.match(res.stderr, /File "<eval_kernel>", line 4, in inner/);
+      assert.match(res.stderr, /decoder\.py/);
+      assert.match(res.stderr, /JSONDecodeError/);
+      assert.doesNotMatch(res.stderr, /py_worker\.py|in execute_code|in main/);
+    });
+
+    test('should preserve syntax source and caret without worker frames', async () => {
+      const res = await pyClient.send({ id: 'py-syntax-trace', code: 'answer = 1\nif True print(answer)' });
+      assert.equal(res.success, false);
+      assert.match(res.stderr, /File "<eval_kernel>", line 2/);
+      assert.match(res.stderr, /if True print\(answer\)/);
+      assert.match(res.stderr, /\^/);
+      assert.match(res.stderr, /SyntaxError/);
+      assert.doesNotMatch(res.stderr, /py_worker\.py|ast\.py/);
+    });
+
+    test('should filter worker frames in explicit and implicit exception chains', async () => {
+      for (const suffix of [' from cause', '']) {
+        const res = await pyClient.send({
+          id: `py-exception-chain-${suffix.length}`,
+          code: 'try:\n    1 / 0\nexcept ZeroDivisionError as cause:\n    raise ValueError("outer failure")' + suffix
+        });
+        assert.equal(res.success, false);
+        assert.match(res.stderr, /ZeroDivisionError: division by zero/);
+        assert.match(res.stderr, /ValueError: outer failure/);
+        assert.match(res.stderr, suffix ? /direct cause/ : /During handling/);
+        assert.match(res.stderr, /File "<eval_kernel>", line 2/);
+        assert.match(res.stderr, /File "<eval_kernel>", line 4/);
+        assert.doesNotMatch(res.stderr, /py_worker\.py/);
+      }
+    });
+
+    test('should filter worker frames inside exception groups', async () => {
+      const res = await pyClient.send({
+        id: 'py-exception-group',
+        code: 'try:\n    1 / 0\nexcept Exception as cause:\n    raise ExceptionGroup("group failure", [cause, ValueError("second failure")])'
+      });
+      assert.equal(res.success, false);
+      assert.match(res.stderr, /ExceptionGroup: group failure/);
+      assert.match(res.stderr, /ZeroDivisionError: division by zero/);
+      assert.match(res.stderr, /ValueError: second failure/);
+      assert.match(res.stderr, /File "<eval_kernel>", line 2/);
+      assert.doesNotMatch(res.stderr, /py_worker\.py/);
+    });
+
     test('should have eager standard math/algorithms modules pre-imported without import', async () => {
       const res = await pyClient.send({
         id: 'py-eager-scope',
@@ -179,6 +232,17 @@ f"【{title}】动画计算完成"
       });
       assert.equal(res.success, true);
       assert.deepEqual(res.result, [5.0, 1, 2]);
+    });
+
+    test('should provide file analysis modules after both namespace reset paths', async () => {
+      const code = '[pathlib.Path(CWD).is_dir(), list(difflib.unified_diff(["a"], ["b"], lineterm=""))[-2:], list(csv.reader(["key,value"]))]';
+      const expected = [true, ['-a', '+b'], [['key', 'value']]];
+      const explicit = await pyClient.send({ id: 'py-analysis-explicit-reset', code });
+      assert.equal(explicit.success, true);
+      assert.deepEqual(explicit.result, expected);
+      const inline = await pyClient.send({ id: 'py-analysis-inline-reset', reset: true, code });
+      assert.equal(inline.success, true);
+      assert.deepEqual(inline.result, expected);
     });
 
     test('should clean binary floating point noise in repr', async () => {
