@@ -5,38 +5,20 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-155%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-160%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 High-performance runtime policy guards, persistent Python & Node evaluation daemons, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
 
-## Highlights in v3.2.0
+## Highlights in v3.3.0
 
-- **Bounded search and reads**: `find_and_read` now budgets its complete UTF-8 output, preserves exact regexes and upstream recovery locations, and bounds individual windows, total read lines, and concurrency. Window selection favors marginal pattern coverage and useful context per line.
-- **Safer, more accurate outlines**: Filesystem preflight and bounded inspection respect service denials and cancellation. Improved lexical scanning covers JS/TS/Python/Go/Rust; optional on-demand ast-grep handles JSX/TSX and known lexical gaps using authorized stdin snapshots, deadlines, output limits, and lexical fallback.
-- **Versioned outline caching**: Bounded caches isolate sessions, backends, identities, languages, and versions. Official session disposal releases caches and statistics; in-flight inspections cannot refill them after disposal.
-- **Cache telemetry**: Detached `summary.readGuard` snapshots report lookups, hits, misses, bypasses, mutation invalidations, and a defined hit ratio. Counters reset each turn while caches can be reused across turns.
-- **Windows measurements**: Reproducible real-CLI timings and raw results are included in `outline-benchmark.md` and `outline-benchmark.windows.json`; these measure local processing, without claiming provider cache or model speedups.
-- **Verification**: 155 tests passed; public declaration type checking and static diagnostics passed. No new package dependencies; ast-grep is an optional external CLI.
-
-## Highlights in v3.1.0
-
-- **Workspace-aware persistent eval**: Python and Node workers synchronize the session working directory through each execution request and expose it as `CWD`. Directory changes preserve user state; invalid directories stop execution before reset or user code. Cancellation and timeout recovery restore the requested directory.
-- **Python project analysis modules**: `pathlib`, `difflib`, and `csv` are pre-imported alongside the existing standard modules, including after reset. Use relative paths for project checks such as i18n key alignment and return compact summaries.
-- **Compact Python diagnostics**: Removes worker implementation frames while preserving `<eval_kernel>` locations, library frames, syntax error source/carets, exception chains, and exception groups.
-- **Verification**: 98 tests passed, including session isolation, queued directory changes, Unicode paths, relative file analysis, and worker recovery; public declaration type checking passed.
-
-## Highlights in v3.0.0
-
-- **Precision Search-and-Slice (`find_and_read`, replacing `read_batch`)**:
-  - Removes `read_batch` (which overlapped with DSH native parallel `read` and encouraged speculative full-file reads) and replaces it with **`find_and_read`** over `ToolExecutionPipeline`.
-  - Runs 1–5 regex patterns in parallel through `grep`, deduplicates and ranks matched files by pattern coverage, merges overlapping `±contextLines` windows, and reads only targeted line slices within a strict `24KB` byte budget (overflowing extras to a compact `path:line` index).
-- **Zero-Schema Native `read` Protection & Blind-Read Tail Outline (`readGuard`)**:
-  - Hooks `tools/post-execute` on direct `read` calls to truncate oversized minified lines (`maxLineChars: 1500`) and automatically inject a bounded ≤20-line structural symbol outline of unread lines whenever a blind `read` hits truncation—zero extra tool schema overhead.
-- **Zero-Cost `edit` & `edit_batch` Context Recovery (`editRecovery`)**:
-  - Automatically attaches exact line-numbered nearby context on `edit` / `edit_batch` match failures (handling CRLF/indentation mismatches, multi-match line lists, rare-anchor alignment, and token-rarity fallback) while strictly skipping policy/sandbox/permission/`ENOENT` denials to avoid content leakage.
+- **Opt-in HTTP cache diagnostics**: [Capture request hashes and upstream usage](cache-diagnostics.md) for OpenAI-compatible `/chat/completions` to compare message prefixes and configuration across turns. Missing cache counters remain distinct from explicit zero; prompts, responses, image bytes, and credentials are never logged.
+- **Bounded, isolated diagnostics**: Asynchronous logging has file and queue limits, flushes on disposal, and stops with one warning on failure. Initialization failures preserve telemetry; response URL, redirect/type metadata, and clone metadata are preserved.
+- **Accurate prefix telemetry**: Detects message replacement, in-place mutation, and changes across turns without stale object-identity digest caching.
+- **Stricter batch preflight**: Rejects empty or unchanged replacement strings before dispatching edits, keeping atomic preflight consistent with native edit validation.
+- **Verification**: 160 tests passed; public declaration type checking passed. No new package dependencies.
 
 ---
 

@@ -5,38 +5,20 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-155%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-160%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、持久化 Python/Node 执行内核、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
 
-## v3.2.0 精准检索、结构大纲与缓存治理
+## v3.3.0 HTTP 缓存诊断与编辑预检修复
 
-- **检索与读取预算**：`find_and_read` 对完整 UTF-8 输出实施硬预算，保留原始正则和上游恢复位置，限制单窗口、累计读取行数与并发；按新增模式覆盖度和单位行信息量选择窗口。
-- **更安全准确的大纲**：通过 fs 服务预检与有界读取处理访问拒绝和取消；增强 JS/TS/Python/Go/Rust 词法识别，按需使用 ast-grep 补足 JSX/TSX 等场景。CLI 仅接收已授权的 stdin 快照，具备超时、输出上限和词法回退。
-- **版本缓存与释放**：有界大纲缓存按会话、后端、文件身份、语言和版本隔离；通过官方会话释放事件清理缓存与统计，阻止进行中的检查在释放后回填。
-- **缓存指标**：统一 telemetry 的独立 `summary.readGuard` 快照提供查询、命中、未命中、绕过、修改失效次数与明确口径的命中率；统计每轮重置，缓存跨轮复用。
-- **Windows 实测**：提供可复现的真实 CLI 测量脚本、`outline-benchmark.md` 和原始 JSON；数据反映本地处理耗时，不代表供应商缓存率或模型加速比例。
-- **验证**：155 项测试通过，公开声明类型检查及静态诊断通过。无新增包依赖，ast-grep 为可选外部 CLI。
-
-## v3.1.0 工作区感知与工程分析增强
-
-- **持久化 eval 工作区同步**：Python / Node worker 通过每次执行请求同步会话工作目录，并注入 `CWD`。目录变化保留用户状态；无效目录会在 reset 或用户代码执行前报错。取消和超时重启后恢复请求目录。
-- **Python 工程分析标准库**：在已有标准库基础上预导入 `pathlib`、`difflib`、`csv`，reset 后同样可用。支持通过相对路径进行 i18n key 对齐等项目核查，并返回紧凑摘要。
-- **精简 Python 异常栈**：剥离 worker 内部帧，保留 `<eval_kernel>` 位置、库调用帧、语法错误源码与指示位置，以及异常链和异常组。
-- **验证**：98 项测试通过，覆盖会话隔离、排队目录切换、中文路径、相对路径文件分析及 worker 恢复；公开声明类型检查通过。
-
-## v3.0.0 架构减法与精准定位升级
-
-- **精准检索切片工具（`find_and_read`，正式剔除 `read_batch`）**：
-  - 彻底移除与 DSH 原生并行 `read` 重叠且易诱导盲读整文件的 `read_batch`，以基于 `ToolExecutionPipeline` 的 **`find_and_read`** 接管探索阶段。
-  - 单次支持 1~5 个正则并行 `grep` 检索，按模式覆盖度去重排序文件，自动合并相邻/重叠的 `±contextLines` 行区间再派发 `read` 切片，严格受 `24KB` 字节预算控制（超出部分降级为紧凑 `path:line` 索引）。
-- **原生 `read` 零工具位护栏与盲读尾部骨架（`readGuard`）**：
-  - 通过 `tools/post-execute` 无感保护所有原生 `read` 调用：截断超长压缩单行（`maxLineChars: 1500`），并在未指定 `offset/limit` 盲读大文件被截断时，于末尾自动附带剩余行（≤20 条）的轻量符号骨架，零额外 Tool Schema 开销。
-- **零成本 `edit` / `edit_batch` 匹配失败上下文自愈（`editRecovery`）**：
-  - 当 `edit` 或 `edit_batch` 因缩进/CRLF/局部过期导致匹配失败时，自动回显带精确行号的附近源码（支持多处命中行号清单、缩进差异诊断、稀有锚点与 Token 滑窗兜底），且严格跳过权限/沙箱/`NO_PROGRESS`/`ENOENT` 拦截以防止内容泄露。
+- **可选 HTTP 缓存诊断**：为 OpenAI 兼容的 `/chat/completions` [记录请求哈希与上游原始 usage](cache-diagnostics.md)，跨轮比较消息前缀和配置。缓存字段缺失与显式零值分别保留；不记录提示词、回复、图片字节或凭据。
+- **诊断边界与故障隔离**：异步日志限制文件大小和队列容量，释放时等待写入完成，失败时仅警告一次并停止诊断。初始化失败不影响 telemetry；保留响应 URL、重定向、类型及克隆元数据。
+- **准确的前缀检测**：重新计算消息摘要，识别消息替换、原地修改和跨轮变化，消除按对象身份缓存摘要造成的盲区。
+- **严格的批量编辑预检**：派发编辑前拒绝空匹配串及新旧内容相同的替换，使 atomic 预检与原生编辑校验保持一致。
+- **验证**：160 项测试通过，公开声明类型检查通过，无新增包依赖。
 
 ---
 
