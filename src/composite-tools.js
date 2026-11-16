@@ -612,6 +612,10 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
             invalidEntries.set(index, 'Invalid edit entry: file_path, old_string, and new_string must be strings.');
             continue;
           }
+          if (!item.old_string || item.old_string === item.new_string) {
+            invalidEntries.set(index, 'Invalid edit entry: old_string must be non-empty and differ from new_string.');
+            continue;
+          }
           const pathKey = normalizePath(item.file_path, cwd) || item.file_path.trim();
           if (!editsByPath.has(pathKey)) editsByPath.set(pathKey, []);
           editsByPath.get(pathKey).push({ index, item });

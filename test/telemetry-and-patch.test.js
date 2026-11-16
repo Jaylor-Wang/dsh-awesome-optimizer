@@ -183,7 +183,7 @@ test('cordis.patch.yml and source files preserve official loop ownership and nev
   }
 });
 
-test('agentTelemetry detects prefix changes accurately with cached message digests', async () => {
+test('agentTelemetry detects replacement, in-place and cross-turn prefix changes', async () => {
   const manager = new AgentTelemetryManager({ get: () => undefined });
   const session = { id: 'sess-prefix-cache' };
   manager.onSessionEvent(session, { type: 'turn/start', data: { turn: 1 } });
@@ -201,5 +201,12 @@ test('agentTelemetry detects prefix changes accurately with cached message diges
 
   const mutatedMsg1 = { role: 'system', content: [{ type: 'text', text: 'sys-changed' }] };
   for await (const _ of manager.wrapStream({ sessionId: 'sess-prefix-cache', messages: [mutatedMsg1, msg2] }, emptyStream)) {}
+  assert.equal(manager.getSummary(session).prefixChanges, 1);
+  mutatedMsg1.content[0].text = 'in-place';
+  for await (const _ of manager.wrapStream({ sessionId: session.id, messages: [mutatedMsg1, msg2] }, emptyStream)) {}
+  assert.equal(manager.getSummary(session).prefixChanges, 2);
+  manager.onSessionEvent(session, { type: 'turn/start', data: { turn: 2 } });
+  msg2.content[0].text = 'changed-across-turns';
+  for await (const _ of manager.wrapStream({ sessionId: session.id, messages: [mutatedMsg1, msg2] }, emptyStream)) {}
   assert.equal(manager.getSummary(session).prefixChanges, 1);
 });

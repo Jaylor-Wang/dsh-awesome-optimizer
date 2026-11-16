@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
+import { CacheDiagnostics } from './cache-diagnostics.js';
 import z from '@deepseek-ai/schemastery';
 import { SOURCE as CONVERGENCE_SOURCE } from './convergence.js';
 import { RECOVERY_SOURCE } from './failure-recovery.js';
 export const TelemetryConfig = z.object({
   enabled: z.boolean().default(true),
   trackStreams: z.boolean().default(true),
-  onTurnSummary: z.any()
+  onTurnSummary: z.any(),
+  cacheDiagnosticsPath: z.string()
 });
 
 function computeQuantile(sortedNumbers, p) {
@@ -85,16 +87,12 @@ export class AgentTelemetryManager {
     this.sessionStates = new WeakMap();
     this.sessionsById = new Map();
     this.activeSession = null;
-    this.messageDigestCache = new WeakMap();
+    this.previousHistories = new WeakMap();
   }
 
   #digestMessage(message) {
     if (message && typeof message === 'object') {
-      const cached = this.messageDigestCache.get(message);
-      if (cached !== undefined) return cached;
-      const digest = createHash('sha256').update(JSON.stringify(message)).digest('hex');
-      this.messageDigestCache.set(message, digest);
-      return digest;
+      return createHash('sha256').update(JSON.stringify(message)).digest('hex');
     }
     return createHash('sha256').update(String(message)).digest('hex');
   }
@@ -114,7 +112,6 @@ export class AgentTelemetryManager {
       recoveryNotices: 0,
       turnOutcome: null,
       streamAttempts: [],
-      previousHistory: null,
       prefixChanges: 0
     };
   }
@@ -177,6 +174,7 @@ export class AgentTelemetryManager {
   }
 
   onSessionDisposed(session) {
+    if (session) this.previousHistories.delete(session);
     if (session?.id !== undefined && this.sessionsById.get(session.id) === session) {
       this.sessionsById.delete(session.id);
     }
@@ -192,10 +190,10 @@ export class AgentTelemetryManager {
 
     if (Array.isArray(options?.messages)) {
       const history = options.messages.map(message => this.#digestMessage(message));
-      if (state.previousHistory?.some((msg, idx) => history[idx] !== msg)) {
+      if (this.previousHistories.get(session)?.some((msg, idx) => history[idx] !== msg)) {
         state.prefixChanges++;
       }
-      state.previousHistory = history;
+      this.previousHistories.set(session, history);
     }
 
     const attempt = {
@@ -322,6 +320,14 @@ export function applyTelemetry(ctx, rawConfig = {}) {
   if (!config.enabled) return null;
 
   const manager = new AgentTelemetryManager(ctx, config);
+  if (config.cacheDiagnosticsPath) {
+    const warn = reason => { try { ctx.logger?.warn?.(`Cache diagnostics disabled: ${reason}`); } catch {} };
+    try {
+      const diagnostics = new CacheDiagnostics(config.cacheDiagnosticsPath, { onStop: warn });
+      ctx.on('llm/stream', (options, next) => diagnostics.wrap(options?.sessionId, next));
+      ctx.on('dispose', () => diagnostics.dispose());
+    } catch { warn('initialization-failed'); }
+  }
 
   ctx.on('session/event', (session, event) => {
     manager.onSessionEvent(session, event);

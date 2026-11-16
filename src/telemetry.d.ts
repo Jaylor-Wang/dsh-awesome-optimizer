@@ -9,6 +9,8 @@ import type { ReadGuardStats } from './read-guard.d.ts';
 export interface TelemetryOptions {
   enabled?: boolean;
   trackStreams?: boolean;
+  /** Opt-in HTTP diagnostics JSONL path; absolute, bounded to 8 MiB. */
+  cacheDiagnosticsPath?: string;
   onTurnSummary?: (summary: TurnTelemetrySummary, session: unknown) => void;
 }
 
