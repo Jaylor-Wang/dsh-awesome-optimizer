@@ -9,6 +9,12 @@ export interface CompositeToolsOptions {
   defaultContextLines?: number;
   maxFiles?: number;
   maxWindows?: number;
+  /** Maximum lines requested in one merged read window. Default: 120. */
+  maxWindowLines?: number;
+  /** Maximum total lines requested per find_and_read call. Default: 600. */
+  maxReadLines?: number;
+  /** Maximum simultaneous reads in each budget-aware batch. Default: 3. */
+  readConcurrency?: number;
   maxBatchEdits?: number;
   maxLineChars?: number;
   maxTotalBytes?: number;
@@ -19,6 +25,8 @@ export interface CompositeToolsStats {
   findExecuted: number;
   findPatternsSearched: number;
   findWindowsRead: number;
+  findLinesRequested: number;
+  findReadBatches: number;
   findFilesMatched: number;
   editBatchesExecuted: number;
   editsRequested: number;

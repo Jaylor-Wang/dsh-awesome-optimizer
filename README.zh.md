@@ -5,12 +5,21 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-98%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-155%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、持久化 Python/Node 执行内核、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
+
+## v3.2.0 精准检索、结构大纲与缓存治理
+
+- **检索与读取预算**：`find_and_read` 对完整 UTF-8 输出实施硬预算，保留原始正则和上游恢复位置，限制单窗口、累计读取行数与并发；按新增模式覆盖度和单位行信息量选择窗口。
+- **更安全准确的大纲**：通过 fs 服务预检与有界读取处理访问拒绝和取消；增强 JS/TS/Python/Go/Rust 词法识别，按需使用 ast-grep 补足 JSX/TSX 等场景。CLI 仅接收已授权的 stdin 快照，具备超时、输出上限和词法回退。
+- **版本缓存与释放**：有界大纲缓存按会话、后端、文件身份、语言和版本隔离；通过官方会话释放事件清理缓存与统计，阻止进行中的检查在释放后回填。
+- **缓存指标**：统一 telemetry 的独立 `summary.readGuard` 快照提供查询、命中、未命中、绕过、修改失效次数与明确口径的命中率；统计每轮重置，缓存跨轮复用。
+- **Windows 实测**：提供可复现的真实 CLI 测量脚本、`outline-benchmark.md` 和原始 JSON；数据反映本地处理耗时，不代表供应商缓存率或模型加速比例。
+- **验证**：155 项测试通过，公开声明类型检查及静态诊断通过。无新增包依赖，ast-grep 为可选外部 CLI。
 
 ## v3.1.0 工作区感知与工程分析增强
 
@@ -55,7 +64,22 @@
 ### 2. PTC 原生复合批处理工具 (`compositeTools`)
 
 - **`find_and_read`**：
-  单次并行执行 1~5 条正则 `grep`，自动合并邻近命中行区间并精准切片 `read`，一跳替代 `grep → 等待 → read`，相比盲读整文件通常节省 80%+ 上下文 Token。
+  单次并行执行 1~5 条正则 `grep`，保留正则原始空白语义，自动合并并拆分邻近命中区间，经原生管线分批 `read`，一跳替代 `grep → 等待 → read`。完整返回文本（含标题、错误、索引和省略说明）受 `maxTotalBytes` 硬限制，默认 24KB；优先保留命中行，未展示位置降级为索引，索引也放不下时明确计数。上游截断、模式失败、匹配总数及可容纳的恢复定位会显式保留。
+  - `maxWindowLines: 120`：单次切片最多请求的行数，防止密集命中连锁合并为整文件读取。
+  - `maxReadLines: 600`：单次调用累计请求行数上限，包含多个文件及窗口。
+  - `readConcurrency: 3`：每批最多同时读取的窗口数；每批完成后重新核算输出空间，空间不足时停止后续读取。原生读取自身截断所隐藏的命中仍进入索引。
+  - 窗口按尚未覆盖的正则数优先选择，再考虑重复模式的边际收益、行数成本及文件多样性；同分时按规范路径与行号稳定排序。`maxFiles` 限制实际选中的文件，不提前排除其他文件中的高价值窗口。
+  - 以上是行数与输出字节上限，不代表底层读取字节数或 Token 的固定换算。
+- **`readGuard` 读取前检查**：
+  仅对支持的大纲语言执行附加检查；先经 fs 服务解析路径、检查文件类型与大小，再优先使用有界 `readBytes` 或文本流。超过 `maxInspectBytes`（默认 512KB）、取消、文件不存在或服务拒绝访问时跳过大纲，不改写原生读取结果。服务失败后不回退到本地磁盘；旧版仅有 `readText` 的服务在大小检查通过后兼容读取，仍受文件检查后变大的竞态限制。
+  - 默认 `astOutline: "auto"`：普通文件用轻量词法扫描；JSX/TSX、TS 装饰器/导出命名空间以及存在声明但词法结果为空的文件按需调用 ast-grep。可设 `"off"` 禁用或 `"always"` 对支持语言强制使用 AST。词法扫描支持 JS/TS/Python/Go/Rust 跨行声明、局部箭头与 Unicode 标识符；两级结果均优先顶层导出并在尾部采样。
+  - AST 只从 stdin 接收 fs 已校验的内容快照，不让 CLI 读取目标路径；使用插件内固定配置、禁用自定义语言库且不经 shell。`astTimeoutMs: 750`、`astMaxOutputBytes: 262144` 限制耗时与输出；取消会终止子进程，缺少 CLI/超时/失败时回退词法结果。`astGrepCommand` 可指定可执行文件名或绝对路径；需要支持 `outline --stdin --json` 的 ast-grep。
+  - 当前 ast-grep 内置规则只提供 TS 命名空间本身；命名空间内部保留词法识别的子声明，避免丢失导航位置。AST 成功结果及失败后的词法结果一起进入版本 LRU，同一文件版本的后续盲读不会再次启动 CLI；版本变化、写入或缓存淘汰后可重新尝试。可通过 `astAttempts/astSucceeded/astFallbacks/astTimeouts/outlineCacheHits` 统计验证。
+  - Windows 测量可运行 `npm run benchmark:outline -- outline-benchmark.windows.json`：真实 CLI、20 次重复样本，分别报告首次调用、未缓存重复解析、词法路径与版本缓存命中；详细方法和本机结果见 `outline-benchmark.md`。
+  - 大纲缓存按会话、fs 后端、解析后的文件身份、语言与版本隔离，每次仍执行 stat，首次读取后再次验证版本。默认 `maxCacheEntries: 32`、`maxCacheBytes: 262144`，缓存符号条目并按当前截断位置筛选；无可靠版本时不缓存，写入/编辑/执行代码及会话销毁会清除缓存，`maxCacheEntries: 0` 可关闭缓存。字节上限按序列化缓存载荷计，不等于 JS 堆占用。
+  - 通过官方独立的 `session/disposed` 事件释放该会话所有后端缓存、强引用与统计；插件卸载清空剩余缓存。释放期间的检查不会重新填充缓存或注入迟到的大纲，其他会话不受影响。
+  - `getStats(session)` 返回独立的每轮统计快照，统一 telemetry 的 `summary.readGuard` 同步提供，禁用 readGuard 时为 `null`。`outlineCacheLookups = outlineCacheHits + outlineCacheMisses`，`outlineCacheHitRate = hits / lookups`（0–1，无查询时为 `null`）。只有预检成功、缓存启用且文件身份/版本有效才计入查询；不存在、过期、被淘汰的条目均算 miss，后续读取或解析失败仍保留 miss。禁用、无身份/版本或本地独立后端计为 `outlineCacheBypasses`，预检拒绝不计查询或 bypass；普通/定向 read 不进入大纲查询分母。
+  - `outlineCacheInvalidations` 统计清除已有会话缓存组（包括进行中的检查）的写入/编辑/bash/eval 事件次数；无缓存组时不计，版本不匹配计 miss，释放清理不计失效。统计在 `turn/start` 重置，缓存可跨轮复用。这些指标只描述本地大纲缓存，与模型输入缓存命中率分别计算。
 - **`edit_batch`**：
   支持单次顺序执行最多 10 处跨单个或多个文件的字面量精准文本替换，内置同文件内存预演校验、`atomic` 原子中止及匹配失败行号自愈提示。
 - **原生沙箱与安全事务继承**：

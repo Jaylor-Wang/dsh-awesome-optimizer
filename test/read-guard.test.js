@@ -129,6 +129,9 @@ test('readGuard truncates oversized single lines and injects tail outline on tru
     assert.equal(stats.inspected, 3);
     assert.equal(stats.linesTruncated, 1);
     assert.equal(stats.outlinesInjected, 1);
+    assert.equal(stats.outlineCacheLookups, 1);
+    assert.equal(stats.outlineCacheMisses, 1);
+    assert.equal(stats.outlineCacheHitRate, 0);
   } finally {
     await host.dispose();
   }

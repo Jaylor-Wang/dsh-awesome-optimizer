@@ -6,6 +6,11 @@ import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline';
 import { normalizePath } from './runtime-policy.js';
 import { buildEditFailureHint } from './edit-recovery.js';
 import { truncateLongLines } from './read-guard.js';
+import { selectReadWindows } from './find-read-ranking.js';
+import {
+  FindOutput, appendSearchNotices, searchStatus, splitWindows,
+  appendSlice, appendMatchListing, finishFindOutput
+} from './find-read-output.js';
 
 export const FIND_AND_READ_TOOL = 'find_and_read';
 export const EDIT_BATCH_TOOL = 'edit_batch';
@@ -20,6 +25,9 @@ export const CompositeToolsConfig = z.object({
   defaultContextLines: z.number().step(1).min(0).max(25).default(5),
   maxFiles: z.number().step(1).min(1).max(12).default(5),
   maxWindows: z.number().step(1).min(1).max(25).default(10),
+  maxWindowLines: z.number().step(1).min(1).max(1000).default(120),
+  maxReadLines: z.number().step(1).min(1).max(10000).default(600),
+  readConcurrency: z.number().step(1).min(1).max(8).default(3),
   maxBatchEdits: z.number().step(1).min(1).max(25).default(10),
   maxLineChars: z.number().step(1).min(100).max(50000).default(1500),
   maxTotalBytes: z.number().step(1).min(512).max(1024 * 1024).default(24576),
@@ -31,10 +39,23 @@ export const CompositeToolsConfig = z.object({
  * or structured `meta.matches` into flat `{ path, lineNumber, line }` records.
  */
 export function parseGrepOutput(text, meta) {
-  if (meta && Array.isArray(meta.matches)) {
-    return meta.matches
-      .filter(m => m && typeof m.path === 'string' && Number.isInteger(m.lineNumber) && m.lineNumber >= 1)
-      .map(m => ({ path: m.path, lineNumber: m.lineNumber, line: String(m.line ?? '') }));
+  if (meta && (Array.isArray(meta.matches) || Array.isArray(meta.files))) {
+    const structured = [
+      ...(Array.isArray(meta.matches) ? meta.matches : []),
+      ...(Array.isArray(meta.files) ? meta.files.flatMap(file =>
+        Array.isArray(file?.matches) ? file.matches.map(match => ({ ...match, path: file.path })) : []
+      ) : [])
+    ];
+    // Meta has its own retention cap; union with rendered text rather than hiding text-only hits.
+    const matches = [...structured, ...parseGrepOutput(text)];
+    const seen = new Set();
+    return matches.filter(m => {
+      if (!m || typeof m.path !== 'string' || !Number.isInteger(m.lineNumber) || m.lineNumber < 1) return false;
+      const key = JSON.stringify([m.path, m.lineNumber]);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).map(m => ({ path: m.path, lineNumber: m.lineNumber, line: String(m.line ?? '') }));
   }
   if (typeof text !== 'string' || !text.trim() || /^No matches found\b/i.test(text.trim())) {
     return [];
@@ -111,20 +132,6 @@ function stripReadEnvelope(rawText) {
   }
   text = text.replace(/\n\n\((?:Output capped\.|Showing lines |End of file )[^)]*\)\s*$/, '');
   return text.trimEnd();
-}
-
-function formatSliceText(sliceText, matchedLines, maxLineChars) {
-  const matchedSet = new Set(matchedLines);
-  const capped = truncateLongLines(sliceText, maxLineChars);
-  return capped
-    .split('\n')
-    .map(line => {
-      const m = line.match(/^(\d+):\s?(.*)$/);
-      if (!m) return `  ${line}`;
-      const lineNum = Number(m[1]);
-      return `${matchedSet.has(lineNum) ? '>' : ' '} ${line}`;
-    })
-    .join('\n');
 }
 
 function countOccurrences(haystack, needle) {
@@ -221,6 +228,8 @@ function emptyStats() {
     findExecuted: 0,
     findPatternsSearched: 0,
     findWindowsRead: 0,
+    findLinesRequested: 0,
+    findReadBatches: 0,
     findFilesMatched: 0,
     editBatchesExecuted: 0,
     editsRequested: 0,
@@ -352,7 +361,7 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
         const rawPatterns = [
           ...(typeof args?.pattern === 'string' ? [args.pattern] : []),
           ...(Array.isArray(args?.patterns) ? args.patterns : [])
-        ].map(p => (typeof p === 'string' ? p.trim() : '')).filter(Boolean);
+        ].filter(p => typeof p === 'string' && p.length > 0);
 
         const uniquePatterns = [...new Set(rawPatterns)];
         if (uniquePatterns.length === 0) {
@@ -396,45 +405,41 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
           return { pattern, result };
         }));
 
-        const allGrepErrored = grepRuns.every(r => r.result.isError);
-        if (allGrepErrored) {
-          const errors = grepRuns.map(({ pattern, result }) => {
-            const msg = result.error?.message
-              ?? result.content?.filter(b => b.type === 'text').map(b => b.text).join('\n')
-              ?? 'grep failed';
-            return `[${pattern}] ${msg}`;
-          }).join('\n');
-          throw new HarnessError(errors, 'FIND_AND_READ_GREP_FAILED');
+        const runs = grepRuns.map(({ pattern, result }, index) => {
+          const text = (result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+          const parsed = result.isError ? [] : parseGrepOutput(text, result.meta);
+          return { pattern, result, index, text, parsed, status: searchStatus(text, result.meta, parsed.length) };
+        });
+        const output = new FindOutput(config.maxTotalBytes);
+        appendSearchNotices(output, runs);
+        if (runs.every(run => run.result.isError)) {
+          throw new HarnessError(output.finish('All grep patterns failed.'), 'FIND_AND_READ_GREP_FAILED');
         }
 
         // Aggregate and deduplicate matches by normalized file path + line number
         const filesMap = new Map();
-        const grepWarnings = [];
         let firstSeenOrder = 0;
 
-        for (const { pattern, result } of grepRuns) {
-          if (result.isError) {
-            const msg = result.error?.message
-              ?? result.content?.filter(b => b.type === 'text').map(b => b.text).join('\n')
-              ?? 'grep error';
-            grepWarnings.push(`Pattern "${pattern}" failed: ${msg}`);
-            continue;
-          }
-          const text = (result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-          const parsed = parseGrepOutput(text, result.meta);
+        for (const { pattern, result, parsed } of runs) {
+          if (result.isError) continue;
           for (const m of parsed) {
             const norm = normalizePath(m.path, cwd) || m.path;
             let entry = filesMap.get(norm);
             if (!entry) {
               entry = {
                 displayPath: m.path,
+                sortPath: norm,
+                linePatterns: new Map(),
                 order: firstSeenOrder++,
                 patterns: new Set(),
-                lines: new Map()
+                lines: new Map(),
+                shown: new Set()
               };
               filesMap.set(norm, entry);
             }
             entry.patterns.add(pattern);
+            if (!entry.linePatterns.has(m.lineNumber)) entry.linePatterns.set(m.lineNumber, new Set());
+            entry.linePatterns.get(m.lineNumber).add(pattern);
             if (!entry.lines.has(m.lineNumber)) {
               entry.lines.set(m.lineNumber, m.line);
             }
@@ -442,8 +447,9 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
         }
 
         if (filesMap.size === 0) {
-          const base = `No matches found for pattern(s): ${uniquePatterns.join(', ')}`;
-          return grepWarnings.length > 0 ? `${base}\n\n${grepWarnings.join('\n')}` : base;
+          const incomplete = runs.some(run => run.result.isError || run.status.truncated);
+          output.appendClipped(`${incomplete ? 'No retained matches available' : 'No matches found'} for pattern(s): ${uniquePatterns.join(', ')}`);
+          return output.finish(output.reduced ? '[Query text truncated to fit byte budget.]' : '');
         }
 
         if (state) {
@@ -457,117 +463,55 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
           || (a.order - b.order)
         );
 
+        output.append(`Found retained matches across ${filesMap.size} file(s):`);
         const canRead = contextLines > 0 && ctx.tools.get('read', exec.agent) !== undefined;
         if (!canRead) {
-          const sections = [];
-          let usedBytes = 0;
-          let omitted = 0;
-          for (const file of rankedFiles) {
-            const rows = [...file.lines.entries()]
-              .sort((a, b) => a[0] - b[0])
-              .map(([ln, lineText]) => `  ${ln}: ${truncateLongLines(lineText, config.maxLineChars)}`);
-            const block = `=== ${file.displayPath} (${file.lines.size} matches) ===\n${rows.join('\n')}`;
-            const bLen = Buffer.byteLength(block, 'utf8') + 2;
-            if (usedBytes + bLen <= config.maxTotalBytes) {
-              sections.push(block);
-              usedBytes += bLen;
-            } else {
-              omitted++;
-            }
-          }
-          if (omitted > 0) {
-            sections.push(`[find_and_read budget: omitted ${omitted} additional matched file(s) to stay within maxTotalBytes=${config.maxTotalBytes}]`);
-          }
-          if (grepWarnings.length > 0) sections.push(grepWarnings.join('\n'));
-          return sections.join('\n\n');
+          appendMatchListing(output, rankedFiles, config.maxLineChars);
+          return finishFindOutput(output, rankedFiles);
         }
 
-        // Build merged windows per top file and select round-robin up to maxWindows
-        const selectedFiles = rankedFiles.slice(0, maxFiles);
-        const fileWindows = selectedFiles.map(file => ({
-          file,
-          windows: mergeMatchWindows([...file.lines.keys()], contextLines),
-          cursor: 0
-        }));
+        const candidates = rankedFiles.flatMap(file =>
+          splitWindows(mergeMatchWindows([...file.lines.keys()], contextLines), config.maxWindowLines)
+            .map(win => ({ file, win }))
+        );
+        const chosenTasks = selectReadWindows(candidates, { maxFiles, maxWindows, maxReadLines: config.maxReadLines });
 
-        const chosenTasks = [];
-        let progress = true;
-        while (chosenTasks.length < maxWindows && progress) {
-          progress = false;
-          for (const fw of fileWindows) {
-            if (chosenTasks.length >= maxWindows) break;
-            if (fw.cursor < fw.windows.length) {
-              chosenTasks.push({ file: fw.file, win: fw.windows[fw.cursor++] });
-              progress = true;
-            }
-          }
-        }
-
-        if (state) {
-          state.findWindowsRead += chosenTasks.length;
-        }
-
-        const readResults = await Promise.all(chosenTasks.map(async (task, idx) => {
+        // Complete a bounded batch before spending more of the output or I/O budget.
+        let cursor = 0;
+        while (cursor < chosenTasks.length && output.remaining() >= 128) {
           exec.signal.throwIfAborted();
-          const limit = task.win.end - task.win.start + 1;
-          const result = await dispatchSubCall(
-            exec,
-            'read',
-            { file_path: task.file.displayPath, offset: task.win.start, limit },
-            `${exec.callId}:find-read-${idx}`
-          );
-          return { ...task, result };
-        }));
-
-        const renderedBlocks = [];
-        const overflowIndex = [];
-        let usedBytes = 0;
-
-        for (const item of readResults) {
-          let block;
-          if (item.result.isError) {
-            const msg = item.result.error?.message
-              ?? item.result.content?.filter(b => b.type === 'text').map(b => b.text).join('\n')
-              ?? 'Read failed';
-            block = `=== ${item.file.displayPath}:${item.win.start}-${item.win.end} [READ ERROR] ===\n${msg}`;
-          } else {
-            const rawText = (item.result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-            const cleanText = stripReadEnvelope(rawText);
-            const formatted = formatSliceText(cleanText, item.win.matchedLines, config.maxLineChars);
-            block = `=== ${item.file.displayPath}:${item.win.start}-${item.win.end} ===\n${formatted}`;
+          const slots = Math.min(config.readConcurrency, Math.max(1, Math.floor(output.remaining() / 1024)));
+          const batch = chosenTasks.slice(cursor, cursor + slots);
+          const previousBytes = output.bytes;
+          if (state) {
+            state.findReadBatches++;
+            state.findWindowsRead += batch.length;
+            state.findLinesRequested += batch.reduce((sum, task) => sum + task.win.end - task.win.start + 1, 0);
           }
-
-          const bytes = Buffer.byteLength(block, 'utf8') + 2;
-          if (renderedBlocks.length === 0 || usedBytes + bytes <= config.maxTotalBytes) {
-            renderedBlocks.push(block);
-            usedBytes += bytes;
-          } else {
-            overflowIndex.push(`${item.file.displayPath}: L${item.win.matchedLines.join(', L')}`);
+          const readResults = await Promise.all(batch.map(async (task, index) => {
+            exec.signal.throwIfAborted();
+            const result = await dispatchSubCall(
+              exec, 'read',
+              { file_path: task.file.displayPath, offset: task.win.start, limit: task.win.end - task.win.start + 1 },
+              `${exec.callId}:find-read-${cursor + index}`
+            );
+            return { ...task, result };
+          }));
+          exec.signal.throwIfAborted();
+          for (const item of readResults) {
+            if (item.result.isError) {
+              const message = item.result.error?.message
+                ?? (item.result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+              output.appendClipped(`=== ${item.file.displayPath}:${item.win.start}-${item.win.end} [READ ERROR] ===\n${message}`);
+            } else {
+              const rawText = (item.result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+              appendSlice(output, item, stripReadEnvelope(rawText), config.maxLineChars);
+            }
           }
+          cursor += batch.length;
+          if (output.bytes === previousBytes) break;
         }
-
-        // Index any windows/files skipped due to maxWindows or maxFiles
-        for (const fw of fileWindows) {
-          for (let i = fw.cursor; i < fw.windows.length; i++) {
-            overflowIndex.push(`${fw.file.displayPath}: L${fw.windows[i].matchedLines.join(', L')}`);
-          }
-        }
-        for (let i = maxFiles; i < rankedFiles.length; i++) {
-          const f = rankedFiles[i];
-          const lineList = [...f.lines.keys()].sort((a, b) => a - b).slice(0, 6);
-          const suffix = f.lines.size > 6 ? `, ... (${f.lines.size} total)` : '';
-          overflowIndex.push(`${f.displayPath}: L${lineList.join(', L')}${suffix}`);
-        }
-
-        const header = `Found matches across ${filesMap.size} file(s) (showing ${renderedBlocks.length} merged slice(s)):`;
-        const parts = [header, ...renderedBlocks];
-        if (overflowIndex.length > 0) {
-          parts.push(`--- Additional matches (index only) ---\n${overflowIndex.join('\n')}`);
-        }
-        if (grepWarnings.length > 0) {
-          parts.push(grepWarnings.join('\n'));
-        }
-        return parts.join('\n\n');
+        return finishFindOutput(output, rankedFiles);
       }
     }, { when: ({ agent }) => ctx.tools.get('grep', agent) !== undefined });
   }

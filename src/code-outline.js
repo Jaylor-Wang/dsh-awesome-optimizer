@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { maskCode, parameterEnd } from './code-lexical.js';
 
 const JS_TS_EXTS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts']);
 const PY_EXTS = new Set(['.py', '.pyw']);
@@ -14,152 +15,146 @@ function truncateSig(sig, maxLen = 96) {
   return clean.length <= maxLen ? clean : `${clean.slice(0, maxLen - 3)}...`;
 }
 
-function scanJsTs(lines) {
+const IDENTIFIER = '[\\p{ID_Start}_$][\\p{ID_Continue}$]*';
+const jsFunction = new RegExp(`^(export\\s+(?:default\\s+)?)?(?:declare\\s+)?(async\\s+)?function\\s*\\*?\\s*(${IDENTIFIER})`, 'u');
+const jsType = new RegExp(`^(export\\s+(?:default\\s+)?)?(?:declare\\s+)?(?:abstract\\s+)?(class|interface|type|enum)\\s+(${IDENTIFIER})`, 'u');
+const jsVariable = new RegExp(`^(export\\s+)?(?:const|let|var)\\s+(${IDENTIFIER})(?:\\s*:[^=;]+)?\\s*=\\s*(async\\s+)?`, 'u');
+const jsMethod = new RegExp(`^(?:(?:public|private|protected|static|readonly|override|abstract|get|set|async)\\s+)*\\*?\\s*(#?${IDENTIFIER})\\s*(?:<[^;{}]*>)?\\s*\\(`, 'u');
+
+function scanDeclarations(content, language) {
+  const masked = maskCode(content, language);
   const entries = [];
-  let inBlockComment = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
-    const trimmed = raw.trim();
-    const lineNum = i + 1;
-
-    if (inBlockComment) {
-      if (trimmed.includes('*/')) inBlockComment = false;
-      continue;
+  let offset = 0;
+  let depth = 0;
+  let skipUntil = -1;
+  for (const [index, line] of masked.split('\n').entries()) {
+    const indent = line.length - line.trimStart().length;
+    const start = offset + indent;
+    const header = masked.slice(start, start + 8192);
+    const push = (text, nested = language === 'py' ? indent > 0 : depth > 0) => {
+      entries.push({ line: index + 1, text: truncateSig(text), nested });
+    };
+    const params = (prefix, from = 0) => {
+      let cursor = from;
+      while (/\s/.test(header[cursor] ?? '') && cursor < header.length) cursor++;
+      if (header[cursor] === '<') {
+        let depth = 1;
+        while (++cursor < header.length && depth > 0) {
+          if (header[cursor] === '<') depth++;
+          else if (header[cursor] === '>' && header[cursor - 1] !== '=') depth--;
+        }
+      }
+      while (/\s/.test(header[cursor] ?? '') && cursor < header.length) cursor++;
+      const open = header[cursor] === '(' ? cursor : -1;
+      const end = parameterEnd(header, open);
+      if (end < 0) return null;
+      skipUntil = Math.max(skipUntil, start + end);
+      return { text: `${prefix}(${content.slice(start + open + 1, start + end).trim()})`, end };
+    };
+    if (start > skipUntil && line.trim()) {
+      let match;
+      const matches = regex => { match = header.match(regex); return match !== null; };
+      if (language === 'js') {
+        if (matches(jsFunction)) {
+          const signature = params(`${match[1] ? 'export ' : ''}${match[2] ? 'async ' : ''}function ${match[3]}`, match[0].length);
+          if (signature) push(signature.text);
+        } else if (matches(jsType)) {
+          const base = match[2] === 'class' ? header.slice(match[0].length).match(/^\s+extends\s+([\w$.]+)/)?.[1] : '';
+          push(`${match[1] ? 'export ' : ''}${match[2]} ${match[3]}${base ? ` extends ${base}` : ''}`);
+        } else if (matches(jsVariable)) {
+          const prefix = `${match[1] ? 'export ' : ''}const ${match[2]}`;
+          const rest = header.slice(match[0].length);
+          const arrow = rest.match(/^(?:<[^;{}]+>\s*)?\(/);
+          const expression = rest.match(/^function(?:\s+[\w$]+)?\s*\(/);
+          if (arrow || expression) {
+            const signature = params(`${prefix} = ${match[3] ? 'async ' : ''}`, match[0].length + (expression ? expression[0].length - 1 : 0));
+            if (signature && (expression || /^(?:\s*:\s*[^;=]+)?\s*=>/.test(header.slice(signature.end + 1, signature.end + 1024)))) push(signature.text);
+            else if (match[1]) push(prefix);
+          } else {
+            const single = rest.match(new RegExp(`^(${IDENTIFIER})\\s*=>`, 'u'));
+            if (single) push(`${prefix} = ${match[3] ? 'async ' : ''}(${single[1]})`);
+            else if (match[1]) push(prefix);
+          }
+        } else if (depth > 0 && matches(jsMethod) && !CONTROL_WORDS.has(match[1])) {
+          const signature = params(`${/\basync\s/.test(match[0]) ? 'async ' : ''}${match[1]}`, match[0].length - 1);
+          if (signature && /^\s*(?::[^;=]+)?\s*\{/.test(header.slice(signature.end + 1, signature.end + 1024))) push(signature.text, true);
+        }
+      } else if (language === 'py') {
+        if (matches(new RegExp(`^(async\\s+)?def\\s+(${IDENTIFIER})(?:\\[[^\\]]+\\])?\\s*\\(`, 'u'))) {
+          const signature = params(`${match[1] ? 'async ' : ''}def ${match[2]}`, match[0].length - 1);
+          if (signature) push(signature.text);
+        } else if (matches(new RegExp(`^class\\s+(${IDENTIFIER})(?:\\[[^\\]]+\\])?`, 'u'))) {
+          const rest = header.slice(match[0].length);
+          if (/^\s*\(/.test(rest)) {
+            const signature = params(`class ${match[1]}`, match[0].length);
+            if (signature) push(signature.text);
+          } else if (/^\s*:/.test(rest)) push(`class ${match[1]}`);
+        }
+      } else if (language === 'go') {
+        if (matches(/^func\s+(?:\([^)]*\)\s*)?([\p{ID_Start}_][\p{ID_Continue}_]*)(?:\[[^\]]+\])?\s*\(/u)) {
+          const open = match[0].lastIndexOf('(');
+          const end = parameterEnd(header, open);
+          if (end >= 0) { push(content.slice(start, start + end + 1)); skipUntil = start + end; }
+        } else if (matches(/^type\s+([\p{ID_Start}_][\p{ID_Continue}_]*)(?:\[[^\]]+\])?\s+(struct|interface)/u)) push(`type ${match[1]} ${match[2]}`);
+      } else if (language === 'rust') {
+        if (matches(/^(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|unsafe|const|extern)\s+)*(fn\s+[\p{ID_Start}_][\p{ID_Continue}_]*(?:<[^;{}]*>)?\s*)\(/u)) {
+          const open = match[0].lastIndexOf('(');
+          const end = parameterEnd(header, open);
+          if (end >= 0) { push(content.slice(start, start + end + 1)); skipUntil = start + end; }
+        } else if (matches(/^(?:pub(?:\([^)]*\))?\s+)?(?:(?:unsafe|auto)\s+)?(?:struct|enum|trait)\s+[\p{ID_Start}_][\p{ID_Continue}_]*/u)) push(match[0]);
+        else if (matches(/^(?:unsafe\s+)?impl(?:<[^;{}]*>)?\s+[^{}]+/)) push(match[0]);
+      }
     }
-    if (!trimmed || trimmed.startsWith('//')) continue;
-    if (trimmed.startsWith('/*')) {
-      if (!trimmed.includes('*/')) inBlockComment = true;
-      continue;
+    if (language !== 'py') for (const char of line) {
+      if (char === '{') depth++;
+      else if (char === '}') depth = Math.max(0, depth - 1);
     }
-
-    const indent = raw.length - raw.trimStart().length;
-
-    // Top-level declarations (indent <= 2)
-    if (indent <= 2) {
-      let m = trimmed.match(/^(export\s+(?:default\s+)?)?(async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\(([^)]*)\)/);
-      if (m) {
-        const prefix = `${m[1] ? 'export ' : ''}${m[2] ? 'async ' : ''}function ${m[3]}(${m[4]})`;
-        entries.push({ line: lineNum, text: truncateSig(prefix), nested: false });
-        continue;
-      }
-
-      m = trimmed.match(/^(export\s+(?:default\s+)?)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)(?:\s+extends\s+([A-Za-z_$][\w$.]*))?/);
-      if (m) {
-        const prefix = `${m[1] ? 'export ' : ''}class ${m[2]}${m[3] ? ` extends ${m[3]}` : ''}`;
-        entries.push({ line: lineNum, text: truncateSig(prefix), nested: false });
-        continue;
-      }
-
-      m = trimmed.match(/^(export\s+)?(interface|type|enum)\s+([A-Za-z_$][\w$]*)/);
-      if (m) {
-        entries.push({ line: lineNum, text: truncateSig(`${m[1] ? 'export ' : ''}${m[2]} ${m[3]}`), nested: false });
-        continue;
-      }
-
-      m = trimmed.match(/^export\s+(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(async\s*)?(?:\(([^)]*)\)\s*=>|function\s*\(([^)]*)\))/);
-      if (m) {
-        const params = m[3] ?? m[4] ?? '';
-        entries.push({ line: lineNum, text: truncateSig(`export const ${m[1]} = ${m[2] ? 'async ' : ''}(${params})`), nested: false });
-        continue;
-      }
-
-      m = trimmed.match(/^export\s+(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=/);
-      if (m) {
-        entries.push({ line: lineNum, text: truncateSig(`export const ${m[1]}`), nested: false });
-        continue;
-      }
-    }
-
-    // Class / object method definitions at shallow indent (1 tab or 2-4 spaces)
-    if (indent >= 1 && indent <= 4) {
-      const m = trimmed.match(/^(?:(?:public|private|protected|static|readonly|override|get|set|async)\s+)*\*?\s*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\(([^)]*)\)\s*(?::\s*[^{]+)?\{/);
-      if (m && !CONTROL_WORDS.has(m[1])) {
-        const isAsync = /\basync\s+/.test(trimmed.slice(0, trimmed.indexOf(m[1])));
-        entries.push({
-          line: lineNum,
-          text: truncateSig(`${isAsync ? 'async ' : ''}${m[1]}(${m[2]})`),
-          nested: true
-        });
-      }
-    }
+    offset += line.length + 1;
   }
   return entries;
 }
 
-function scanPython(lines) {
-  const entries = [];
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
-    const trimmed = raw.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const indent = raw.length - raw.trimStart().length;
-    if (indent > 4) continue;
-
-    let m = trimmed.match(/^class\s+([A-Za-z_]\w*)(?:\(([^)]*)\))?\s*:/);
-    if (m) {
-      entries.push({
-        line: i + 1,
-        text: truncateSig(`class ${m[1]}${m[2] ? `(${m[2]})` : ''}`),
-        nested: indent > 0
-      });
-      continue;
-    }
-
-    m = trimmed.match(/^(async\s+)?def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
-    if (m) {
-      entries.push({
-        line: i + 1,
-        text: truncateSig(`${m[1] ? 'async ' : ''}def ${m[2]}(${m[3]})`),
-        nested: indent > 0
-      });
-    }
-  }
-  return entries;
+/** Check language support without reading file contents. */
+export function supportsCodeOutline(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return !ext || JS_TS_EXTS.has(ext) || PY_EXTS.has(ext) || GO_EXTS.has(ext) || RS_EXTS.has(ext);
 }
 
-function scanGo(lines) {
-  const entries = [];
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
-    if (raw.startsWith('func ') || raw.startsWith('type ')) {
-      const m = raw.match(/^(func\s+(?:\([^)]+\)\s*)?[A-Za-z_]\w*\([^)]*\)|type\s+[A-Za-z_]\w*\s+(?:struct|interface))/);
-      if (m) entries.push({ line: i + 1, text: truncateSig(m[1]), nested: false });
-    }
-  }
-  return entries;
-}
-
-function scanRust(lines) {
-  const entries = [];
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    const indent = lines[i].length - lines[i].trimStart().length;
-    if (indent > 4) continue;
-    const m = trimmed.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(fn\s+[A-Za-z_]\w*\([^)]*\)|struct\s+[A-Za-z_]\w*|enum\s+[A-Za-z_]\w*|trait\s+[A-Za-z_]\w*|impl(?:<[^>]*>)?\s+[^{]+)/);
-    if (m) {
-      entries.push({ line: i + 1, text: truncateSig(m[0]), nested: indent > 0 });
-    }
-  }
-  return entries;
-}
-
-/**
- * Extract lightweight symbol entries with 1-based line numbers for supported source languages.
- */
+/** Extract lightweight symbols with 1-based line numbers. */
 export function extractCodeOutline(content, { filePath = '', startLine = 1, endLine = Infinity } = {}) {
   if (typeof content !== 'string' || !content) return [];
   const ext = path.extname(filePath).toLowerCase();
-  const lines = content.replace(/\r\n/g, '\n').split('\n');
+  const language = PY_EXTS.has(ext) ? 'py' : GO_EXTS.has(ext) ? 'go' : RS_EXTS.has(ext) ? 'rust' : JS_TS_EXTS.has(ext) || !ext ? 'js' : null;
+  if (!language) return [];
+  return scanDeclarations(content, language).filter(item => item.line >= startLine && item.line <= endLine);
+}
 
-  let raw;
-  if (PY_EXTS.has(ext)) raw = scanPython(lines);
-  else if (GO_EXTS.has(ext)) raw = scanGo(lines);
-  else if (RS_EXTS.has(ext)) raw = scanRust(lines);
-  else if (JS_TS_EXTS.has(ext) || !ext) raw = scanJsTs(lines);
-  else return [];
+/** Cacheable symbols are independent of the caller's current read offset. */
+export function buildCodeOutline(content, filePath) {
+  return { entries: extractCodeOutline(content, { filePath }), totalLines: content.split('\n').length };
+}
 
-  return raw.filter(item => item.line >= startLine && item.line <= endLine);
+/** Prefer top-level APIs and sample across the remaining file instead of its first page. */
+export function formatOutlineEntries(entries, { startLine = 1, endLine = Infinity, maxEntries = 20, maxBytes = 1536 } = {}) {
+  const all = entries.filter(item => item.line >= startLine && item.line <= endLine);
+  const groups = [[], [], []];
+  for (const entry of all) groups[entry.nested ? 2 : /^(?:export|pub\b)/.test(entry.text) ? 0 : 1].push(entry);
+  for (let count = Math.min(all.length, Math.max(0, Math.floor(maxEntries))); count > 0; count--) {
+    const shown = [];
+    for (const group of groups) {
+      const slots = Math.min(group.length, count - shown.length);
+      for (let i = 0; i < slots; i++) {
+        const index = slots === 1 ? 0 : Math.round(i * (group.length - 1) / (slots - 1));
+        shown.push(group[index]);
+      }
+    }
+    shown.sort((a, b) => a.line - b.line);
+    const lines = shown.map(item => `L${item.line}: ${item.nested ? '  ' : ''}${item.text}`);
+    if (all.length > count) lines.push(`... (+${all.length - count} more symbols)`);
+    const output = lines.join('\n');
+    if (Buffer.byteLength(output, 'utf8') <= maxBytes) return output;
+  }
+  return '';
 }
 
 /**
@@ -172,27 +167,5 @@ export function formatCodeOutline(content, {
   maxEntries = 20,
   maxBytes = 1536
 } = {}) {
-  const all = extractCodeOutline(content, { filePath, startLine, endLine });
-  if (all.length === 0) return '';
-
-  const shown = all.slice(0, maxEntries);
-  const lines = shown.map(item => `L${item.line}: ${item.nested ? '  ' : ''}${item.text}`);
-  if (all.length > shown.length) {
-    lines.push(`... (+${all.length - shown.length} more symbols)`);
-  }
-
-  let output = lines.join('\n');
-  if (Buffer.byteLength(output, 'utf8') > maxBytes) {
-    const trimmed = [];
-    let bytes = 0;
-    for (const line of lines) {
-      const b = Buffer.byteLength(line, 'utf8') + 1;
-      if (bytes + b > maxBytes - 48) break;
-      trimmed.push(line);
-      bytes += b;
-    }
-    trimmed.push('... (outline truncated)');
-    output = trimmed.join('\n');
-  }
-  return output;
+  return formatOutlineEntries(extractCodeOutline(content, { filePath }), { startLine, endLine, maxEntries, maxBytes });
 }

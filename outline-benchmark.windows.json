@@ -1,0 +1,184 @@
+{
+  "measuredAt": "2026-11-16T13:27:33.111Z",
+  "platform": "win32",
+  "architecture": "x64",
+  "osRelease": "10.0.26300",
+  "node": "v24.21.0",
+  "sourceBytes": 2912,
+  "sourceLines": 44,
+  "ordinarySourceBytes": 2628,
+  "ordinarySourceLines": 41,
+  "methodology": "Real ast-grep CLI over stdin; in-memory versioned fs isolates parsing/spawn cost. First invocation is process-cold, not a flushed OS disk cache. Repeated uncached samples launch a fresh CLI each time. Cache hits include resolve/stat and rendering but no content read or process. No network or model calls.",
+  "astUncached": {
+    "firstMs": 67.468,
+    "firstCounts": {
+      "contentReads": 1,
+      "statCalls": 2,
+      "inspected": 1,
+      "linesTruncated": 0,
+      "outlinesInjected": 1,
+      "outlineCacheHits": 0,
+      "astAttempts": 1,
+      "astSucceeded": 1,
+      "astFallbacks": 0,
+      "astTimeouts": 0
+    },
+    "repeated": {
+      "samples": 20,
+      "minMs": 48.91,
+      "medianMs": 51.269,
+      "p95Ms": 56.48,
+      "maxMs": 57.3
+    },
+    "finalCounts": {
+      "contentReads": 21,
+      "statCalls": 42,
+      "inspected": 21,
+      "linesTruncated": 0,
+      "outlinesInjected": 21,
+      "outlineCacheHits": 0,
+      "astAttempts": 21,
+      "astSucceeded": 21,
+      "astFallbacks": 0,
+      "astTimeouts": 0
+    }
+  },
+  "lexical": {
+    "firstMs": 0.211,
+    "firstCounts": {
+      "contentReads": 1,
+      "statCalls": 2,
+      "inspected": 1,
+      "linesTruncated": 0,
+      "outlinesInjected": 1,
+      "outlineCacheHits": 0,
+      "astAttempts": 0,
+      "astSucceeded": 0,
+      "astFallbacks": 0,
+      "astTimeouts": 0
+    },
+    "repeated": {
+      "samples": 20,
+      "minMs": 0.112,
+      "medianMs": 0.159,
+      "p95Ms": 0.207,
+      "maxMs": 0.429
+    },
+    "finalCounts": {
+      "contentReads": 21,
+      "statCalls": 42,
+      "inspected": 21,
+      "linesTruncated": 0,
+      "outlinesInjected": 21,
+      "outlineCacheHits": 0,
+      "astAttempts": 0,
+      "astSucceeded": 0,
+      "astFallbacks": 0,
+      "astTimeouts": 0
+    }
+  },
+  "autoOrdinary": {
+    "firstMs": 0.352,
+    "firstCounts": {
+      "contentReads": 1,
+      "statCalls": 2,
+      "inspected": 1,
+      "linesTruncated": 0,
+      "outlinesInjected": 1,
+      "outlineCacheHits": 0,
+      "astAttempts": 0,
+      "astSucceeded": 0,
+      "astFallbacks": 0,
+      "astTimeouts": 0
+    },
+    "repeated": {
+      "samples": 20,
+      "minMs": 0.097,
+      "medianMs": 0.185,
+      "p95Ms": 0.225,
+      "maxMs": 0.273
+    },
+    "finalCounts": {
+      "contentReads": 21,
+      "statCalls": 42,
+      "inspected": 21,
+      "linesTruncated": 0,
+      "outlinesInjected": 21,
+      "outlineCacheHits": 0,
+      "astAttempts": 0,
+      "astSucceeded": 0,
+      "astFallbacks": 0,
+      "astTimeouts": 0
+    }
+  },
+  "astCached": {
+    "firstMs": 50.113,
+    "firstCounts": {
+      "contentReads": 1,
+      "statCalls": 2,
+      "inspected": 1,
+      "linesTruncated": 0,
+      "outlinesInjected": 1,
+      "outlineCacheHits": 0,
+      "astAttempts": 1,
+      "astSucceeded": 1,
+      "astFallbacks": 0,
+      "astTimeouts": 0
+    },
+    "repeated": {
+      "samples": 20,
+      "minMs": 0.008,
+      "medianMs": 0.009,
+      "p95Ms": 0.019,
+      "maxMs": 0.034
+    },
+    "finalCounts": {
+      "contentReads": 1,
+      "statCalls": 22,
+      "inspected": 21,
+      "linesTruncated": 0,
+      "outlinesInjected": 21,
+      "outlineCacheHits": 20,
+      "astAttempts": 1,
+      "astSucceeded": 1,
+      "astFallbacks": 0,
+      "astTimeouts": 0
+    }
+  },
+  "astLarge": {
+    "sourceBytes": 142112,
+    "sourceLines": 2444,
+    "firstMs": 58.648,
+    "firstCounts": {
+      "contentReads": 1,
+      "statCalls": 2,
+      "inspected": 1,
+      "linesTruncated": 0,
+      "outlinesInjected": 1,
+      "outlineCacheHits": 0,
+      "astAttempts": 1,
+      "astSucceeded": 1,
+      "astFallbacks": 0,
+      "astTimeouts": 0
+    },
+    "repeated": {
+      "samples": 20,
+      "minMs": 0.05,
+      "medianMs": 0.055,
+      "p95Ms": 0.068,
+      "maxMs": 0.082
+    },
+    "finalCounts": {
+      "contentReads": 1,
+      "statCalls": 22,
+      "inspected": 21,
+      "linesTruncated": 0,
+      "outlinesInjected": 21,
+      "outlineCacheHits": 20,
+      "astAttempts": 1,
+      "astSucceeded": 1,
+      "astFallbacks": 0,
+      "astTimeouts": 0
+    }
+  }
+}

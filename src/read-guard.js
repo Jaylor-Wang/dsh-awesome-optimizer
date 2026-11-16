@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import z from '@deepseek-ai/schemastery';
-import { formatCodeOutline } from './code-outline.js';
+import { formatOutlineEntries, supportsCodeOutline } from './code-outline.js';
+import { buildAdaptiveOutline } from './ast-outline.js';
+import { OutlineCache } from './outline-cache.js';
 
 export const READ_GUARD_SOURCE = 'optimizer-read-guard';
 
@@ -11,7 +13,13 @@ export const ReadGuardConfig = z.object({
   injectTailOutline: z.boolean().default(true),
   maxOutlineEntries: z.number().step(1).min(3).max(60).default(20),
   maxOutlineBytes: z.number().step(1).min(256).max(8192).default(1536),
-  maxInspectBytes: z.number().step(1).min(4096).max(4 * 1024 * 1024).default(512 * 1024)
+  maxInspectBytes: z.number().step(1).min(4096).max(4 * 1024 * 1024).default(512 * 1024),
+  maxCacheEntries: z.number().step(1).min(0).max(256).default(32),
+  maxCacheBytes: z.number().step(1).min(1024).max(8 * 1024 * 1024).default(256 * 1024),
+  astOutline: z.union(['off', 'auto', 'always']).default('auto'),
+  astGrepCommand: z.string().default('ast-grep'),
+  astTimeoutMs: z.number().step(1).min(1).max(5000).default(750),
+  astMaxOutputBytes: z.number().step(1).min(1024).max(1024 * 1024).default(256 * 1024)
 });
 
 export function truncateLongLines(text, maxLineChars = 1500) {
@@ -52,42 +60,89 @@ function detectTruncation(body, meta) {
   return null;
 }
 
-async function readTargetSafely(filePath, cwd, fsService, signal, maxInspectBytes) {
+async function readTargetSafely(filePath, cwd, fsService, signal, config, cache, stats) {
+  const { maxInspectBytes } = config;
   if (signal?.aborted) return null;
+  const generation = cache?.generation;
 
   if (fsService) {
-    if (typeof fsService.readFile === 'function') {
-      try {
-        const content = await fsService.readFile(filePath, { cwd, signal });
-        if (typeof content === 'string') {
-          return Buffer.byteLength(content, 'utf8') <= maxInspectBytes ? content : null;
+    // A service failure is authoritative; never retry through another backend.
+    try {
+      if (typeof fsService.resolve !== 'function' || typeof fsService.stat !== 'function') return null;
+      const target = await fsService.resolve(filePath, { cwd, signal });
+      const info = await fsService.stat(target, signal);
+      if (signal?.aborted || cache?.generation !== generation || info?.type !== 'file' || !Number.isFinite(info.size) || info.size < 0 || info.size > maxInspectBytes) return null;
+      const key = typeof target?.targetKey === 'string' && target.targetKey ? JSON.stringify([target.targetKey, path.extname(filePath).toLowerCase()]) : null;
+      const version = typeof info.version === 'string' && info.version ? info.version : null;
+      if (cache?.maxEntries > 0 && key && version) {
+        if (stats) stats.outlineCacheLookups++;
+        const cached = cache.get(key, version);
+        if (cached) {
+          if (stats) stats.outlineCacheHits++;
+          return cached;
         }
-      } catch {
-        // Fall through
+        if (stats) stats.outlineCacheMisses++;
+      } else if (stats) {
+        stats.outlineCacheBypasses++;
       }
-    }
-    if (typeof fsService.readText === 'function') {
-      try {
-        const target = typeof fsService.resolve === 'function'
-          ? await fsService.resolve(filePath, { cwd, signal })
-          : filePath;
-        const content = await fsService.readText(target, signal);
-        if (typeof content !== 'string') return null;
-        return Buffer.byteLength(content, 'utf8') <= maxInspectBytes ? content : null;
-      } catch {
-        // Fall through to disk
+      let content;
+      if (typeof fsService.readBytes === 'function') {
+        const bytes = await fsService.readBytes(target, signal, maxInspectBytes);
+        if (signal?.aborted || bytes.byteLength > maxInspectBytes) return null;
+        content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      } else if (typeof fsService.streamText === 'function') {
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of await fsService.streamText(target, signal)) {
+          if (signal?.aborted || typeof chunk !== 'string') return null;
+          size += Buffer.byteLength(chunk, 'utf8');
+          if (size > maxInspectBytes) return null;
+          chunks.push(chunk);
+        }
+        content = chunks.join('');
+      } else if (typeof fsService.readText === 'function') {
+        // Compatibility with older services: only after a successful size preflight.
+        content = await fsService.readText(target, signal);
+      } else {
+        return null;
       }
+      if (signal?.aborted || cache?.generation !== generation || typeof content !== 'string' || Buffer.byteLength(content, 'utf8') > maxInspectBytes) return null;
+      const outline = await buildAdaptiveOutline(content, filePath, config, signal, stats);
+      if (signal?.aborted || cache?.generation !== generation) return null;
+      if (key && version) {
+        const after = await fsService.stat(target, signal);
+        if (signal?.aborted || cache?.generation !== generation || after?.type !== 'file' || after.version !== version || after.size !== info.size) return null;
+        cache?.set(key, version, outline);
+      }
+      return outline;
+    } catch {
+      return null;
     }
   }
 
+  // Standalone hosts without an fs service still get a bounded local read.
+  let handle;
   try {
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
-    const stat = await fs.stat(resolved);
-    if (!stat.isFile() || stat.size > maxInspectBytes) return null;
-    if (signal?.aborted) return null;
-    return await fs.readFile(resolved, 'utf8');
+    handle = await fs.open(resolved, 'r');
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > maxInspectBytes || signal?.aborted || cache?.generation !== generation) return null;
+    if (stats) stats.outlineCacheBypasses++;
+    const buffer = Buffer.alloc(maxInspectBytes + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      if (signal?.aborted) return null;
+      const { bytesRead } = await handle.read(buffer, size, buffer.length - size, null);
+      if (!bytesRead) break;
+      size += bytesRead;
+    }
+    if (signal?.aborted || cache?.generation !== generation || size > maxInspectBytes) return null;
+    const outline = await buildAdaptiveOutline(new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, size)), filePath, config, signal, stats);
+    return signal?.aborted || cache?.generation !== generation ? null : outline;
   } catch {
     return null;
+  } finally {
+    await handle?.close().catch(() => {});
   }
 }
 
@@ -95,29 +150,85 @@ async function readTargetSafely(filePath, cwd, fsService, signal, maxInspectByte
  * Protect direct `read` calls against giant minified lines and blind large-file truncation
  * by enforcing single-line caps and appending a compact structural outline of unread tail lines.
  */
+function emptyStats() {
+  return {
+    inspected: 0, linesTruncated: 0, outlinesInjected: 0,
+    outlineCacheLookups: 0, outlineCacheHits: 0, outlineCacheMisses: 0,
+    outlineCacheBypasses: 0, outlineCacheInvalidations: 0,
+    astAttempts: 0, astSucceeded: 0, astFallbacks: 0, astTimeouts: 0
+  };
+}
+
 export function applyReadGuard(ctx, rawConfig = {}) {
   const config = ReadGuardConfig(rawConfig);
   if (!config.enabled) return null;
 
   const statsBySession = new WeakMap();
+  const cachesBySession = new WeakMap();
+  const disposedSessions = new WeakSet();
+  let disposed = false;
+  const anonymousSession = {};
+  const localBackend = {};
+  const allCaches = new Set();
+  const clearCaches = session => {
+    const caches = cachesBySession.get(session ?? anonymousSession);
+    for (const cache of caches?.values() ?? []) { cache.clear(); allCaches.delete(cache); }
+    cachesBySession.delete(session ?? anonymousSession);
+    return Boolean(caches?.size);
+  };
+  const cacheFor = (session, backend) => {
+    const key = session ?? anonymousSession;
+    let caches = cachesBySession.get(key);
+    if (!caches) {
+      caches = new Map();
+      cachesBySession.set(key, caches);
+    }
+    let cache = caches.get(backend ?? localBackend);
+    if (!cache) {
+      cache = new OutlineCache(config.maxCacheEntries, config.maxCacheBytes);
+      caches.set(backend ?? localBackend, cache);
+      allCaches.add(cache);
+    }
+    return cache;
+  };
+  ctx.on('dispose', () => {
+    disposed = true;
+    for (const cache of allCaches) cache.clear();
+    allCaches.clear();
+  });
   const statsFor = session => {
-    if (!session) return null;
+    if (disposed || !session || disposedSessions.has(session)) return null;
     let s = statsBySession.get(session);
     if (!s) {
-      s = { inspected: 0, linesTruncated: 0, outlinesInjected: 0 };
+      s = emptyStats();
       statsBySession.set(session, s);
     }
     return s;
   };
 
+  ctx.on('session/disposed', session => {
+    if (!session) return;
+    disposedSessions.add(session);
+    clearCaches(session);
+    statsBySession.delete(session);
+  });
   ctx.on('session/event', (session, event) => {
-    if (event?.type === 'turn/start') {
-      statsBySession.set(session, { inspected: 0, linesTruncated: 0, outlinesInjected: 0 });
+    if (!disposed && session && !disposedSessions.has(session) && event?.type === 'turn/start') {
+      statsBySession.set(session, emptyStats());
     }
   });
 
   ctx.on('tools/post-execute', async (exec, result, next) => {
     const decision = await next();
+    const session = exec.agent?.session;
+    if (disposed || (session && disposedSessions.has(session))) return decision;
+    // Invalidate conservatively even for failed/partially successful composite mutations.
+    if (['write', 'edit', 'edit_batch', 'bash', 'eval_node', 'eval_python'].includes(exec?.name)) {
+      if (clearCaches(session)) {
+        const stats = statsFor(session);
+        if (stats) stats.outlineCacheInvalidations++;
+      }
+    }
     if (
       decision?.kind === 'block' ||
       exec?.name !== 'read' ||
@@ -131,7 +242,6 @@ export function applyReadGuard(ctx, rawConfig = {}) {
     const baseBlocks = decision?.content ?? result.content;
     if (!Array.isArray(baseBlocks) || baseBlocks.length === 0) return decision;
 
-    const session = exec.agent?.session;
     const stats = statsFor(session);
     if (stats) stats.inspected++;
 
@@ -154,7 +264,7 @@ export function applyReadGuard(ctx, rawConfig = {}) {
     // 2. Blind-read tail outline injection (only when caller omitted both offset & limit and hit truncation)
     const args = exec.arguments ?? {};
     const isBlindRead = args.offset === undefined && args.limit === undefined && typeof args.file_path === 'string' && args.file_path.trim().length > 0;
-    if (config.injectTailOutline && isBlindRead) {
+    if (config.injectTailOutline && isBlindRead && supportsCodeOutline(args.file_path)) {
       const firstTextIdx = updatedBlocks.findIndex(b => b.type === 'text' && typeof b.text === 'string');
       if (firstTextIdx !== -1) {
         const { prefix, body, suffix } = splitEnvelope(updatedBlocks[firstTextIdx].text);
@@ -170,16 +280,16 @@ export function applyReadGuard(ctx, rawConfig = {}) {
             try {
               return ctx.get('fs');
             } catch {
-              return undefined;
+              // An unavailable/denied service is not permission to bypass it.
+              return {};
             }
           })();
 
-          const fullText = await readTargetSafely(args.file_path, cwd, fsService, exec.signal, config.maxInspectBytes);
-          if (fullText !== null && !exec.signal?.aborted) {
-            const totalLines = fullText.replace(/\r\n/g, '\n').split('\n').length;
+          const parsed = await readTargetSafely(args.file_path, cwd, fsService, exec.signal, config, cacheFor(session, fsService), stats);
+          if (parsed !== null && !exec.signal?.aborted && !disposed && !(session && disposedSessions.has(session))) {
+            const { totalLines } = parsed;
             if (totalLines > trunc.endLine) {
-              const outline = formatCodeOutline(fullText, {
-                filePath: args.file_path,
+              const outline = formatOutlineEntries(parsed.entries, {
                 startLine: trunc.endLine + 1,
                 endLine: totalLines,
                 maxEntries: config.maxOutlineEntries,
@@ -207,7 +317,11 @@ export function applyReadGuard(ctx, rawConfig = {}) {
 
   return {
     getStats(session) {
-      return statsFor(session) ?? { inspected: 0, linesTruncated: 0, outlinesInjected: 0 };
+      const stats = statsFor(session) ?? emptyStats();
+      return {
+        ...stats,
+        outlineCacheHitRate: stats.outlineCacheLookups ? stats.outlineCacheHits / stats.outlineCacheLookups : null
+      };
     }
   };
 }

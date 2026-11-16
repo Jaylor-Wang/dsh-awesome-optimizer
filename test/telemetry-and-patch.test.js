@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createTestRuntime, call } from './support/runtime.js';
 import { compareTurnSummaries } from '../src/index.js';
 import { AgentTelemetryManager } from '../src/telemetry.js';
+import { OutlineCache } from '../src/outline-cache.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -52,6 +53,9 @@ test('agentTelemetry tracks parallel tool batches, token usage, prefix stability
     assert.equal(summary.usage.inputTokens, 240);
     assert.equal(summary.usage.outputTokens, 80);
     assert.equal(summary.turnOutcome, 'completed');
+    assert.deepEqual(summary.readGuard, host.readGuard.getStats(host.agent.session));
+    assert.deepEqual(callbackSummary.readGuard, summary.readGuard);
+    assert.equal(summary.readGuard.outlineCacheHitRate, null);
 
     const sequentialBaseline = {
       modelRequests: 4,
@@ -72,6 +76,66 @@ test('agentTelemetry tracks parallel tool batches, token usage, prefix stability
   } finally {
     await host.dispose();
   }
+});
+
+test('official loop reports detached cache summaries across turns and releases them on session disposal', async t => {
+  const cleared = [];
+  const clear = OutlineCache.prototype.clear;
+  t.mock.method(OutlineCache.prototype, 'clear', function () {
+    clear.call(this);
+    cleared.push(this);
+  });
+  const summaries = [];
+  const source = 'head\nexport function hiddenTail() {}';
+  const host = await createTestRuntime({
+    files: { 'source.ts': source },
+    optimizerConfig: {
+      persistentEval: { enabled: false },
+      telemetry: { onTurnSummary(summary) { summaries.push(summary); } }
+    },
+    configureTools(ctx) {
+      ctx.get('fs').readBytes = async () => Buffer.from(source);
+    },
+    readHandler: () => '<content>\n1: head\n\n(Showing lines 1-1 of 2. Use offset=2 to continue.)\n</content>',
+    script: [
+      [call('cache-first', 'read', { file_path: 'source.ts' })],
+      [call('cache-second', 'read', { file_path: 'source.ts' })],
+      [{ type: 'text', text: 'First turn complete.' }],
+      [call('cache-next-turn', 'read', { file_path: 'source.ts' })],
+      [{ type: 'text', text: 'Second turn complete.' }]
+    ]
+  });
+  try {
+    await host.run('Read the same truncated file twice');
+    assert.equal(host.errors.length, 0);
+    const first = summaries[0].readGuard;
+    assert.equal(first.outlineCacheLookups, 2);
+    assert.equal(first.outlineCacheHits, 1);
+    assert.equal(first.outlineCacheMisses, 1);
+    assert.equal(first.outlineCacheHitRate, 0.5);
+    assert.equal(summaries[0].prefixChanges, 0);
+    await host.run('Read it again in the next turn');
+    assert.equal(host.errors.length, 0);
+    assert.equal(summaries[1].readGuard.outlineCacheLookups, 1);
+    assert.equal(summaries[1].readGuard.outlineCacheHits, 1);
+    assert.equal(summaries[1].readGuard.outlineCacheHitRate, 1);
+    assert.equal(first.outlineCacheLookups, 2);
+    assert.equal(first.outlineCacheHitRate, 0.5);
+    await host.handles[0].dispose();
+    assert.equal(cleared.length, 1);
+    assert.equal(cleared[0].entries.size, 0);
+    assert.equal(cleared[0].bytes, 0);
+    assert.equal(host.readGuard.getStats(host.agent.session).inspected, 0);
+  } finally { await host.dispose(); }
+  assert.equal(cleared.length, 1);
+});
+
+test('telemetry exposes null readGuard summaries when no session or guard is available', () => {
+  const manager = new AgentTelemetryManager({ get: () => undefined });
+  assert.equal(manager.getSummary().readGuard, null);
+  const session = {};
+  manager.onSessionEvent(session, { type: 'turn/start', data: { turn: 1 } });
+  assert.equal(manager.getSummary(session).readGuard, null);
 });
 
 test('agentTelemetry attributes interleaved streams to their session IDs', async () => {

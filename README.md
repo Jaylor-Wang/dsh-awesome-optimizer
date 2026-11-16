@@ -5,12 +5,21 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-98%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-155%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 High-performance runtime policy guards, persistent Python & Node evaluation daemons, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
+
+## Highlights in v3.2.0
+
+- **Bounded search and reads**: `find_and_read` now budgets its complete UTF-8 output, preserves exact regexes and upstream recovery locations, and bounds individual windows, total read lines, and concurrency. Window selection favors marginal pattern coverage and useful context per line.
+- **Safer, more accurate outlines**: Filesystem preflight and bounded inspection respect service denials and cancellation. Improved lexical scanning covers JS/TS/Python/Go/Rust; optional on-demand ast-grep handles JSX/TSX and known lexical gaps using authorized stdin snapshots, deadlines, output limits, and lexical fallback.
+- **Versioned outline caching**: Bounded caches isolate sessions, backends, identities, languages, and versions. Official session disposal releases caches and statistics; in-flight inspections cannot refill them after disposal.
+- **Cache telemetry**: Detached `summary.readGuard` snapshots report lookups, hits, misses, bypasses, mutation invalidations, and a defined hit ratio. Counters reset each turn while caches can be reused across turns.
+- **Windows measurements**: Reproducible real-CLI timings and raw results are included in `outline-benchmark.md` and `outline-benchmark.windows.json`; these measure local processing, without claiming provider cache or model speedups.
+- **Verification**: 155 tests passed; public declaration type checking and static diagnostics passed. No new package dependencies; ast-grep is an optional external CLI.
 
 ## Highlights in v3.1.0
 
@@ -55,7 +64,22 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
 ### 2. PTC Native Composite Batch Tooling (`compositeTools`)
 
 - **`find_and_read`**:
-  Searches 1–5 regex patterns in parallel via `grep`, merges adjacent line matches into contiguous windows, and fetches bounded code slices via `read` in a single round-trip (eliminating `grep -> LLM -> read` waits and whole-file bloat).
+  Searches 1–5 regex patterns in parallel without changing regex whitespace, merges and splits adjacent matches, and dispatches budget-aware batches of native `read` calls in one round-trip. The complete returned text, including headers, errors, indexes, and omission notices, fits `maxTotalBytes` (24KB by default). Matched rows take priority; undisplayed locations become bounded indexes with explicit omission counts. Upstream truncation, failed patterns, totals, and recovery locators that fit are reported.
+  - `maxWindowLines: 120`: maximum requested lines per slice, preventing dense chained matches from becoming whole-file reads.
+  - `maxReadLines: 600`: maximum total requested lines across all files and windows in one call.
+  - `readConcurrency: 3`: maximum simultaneous reads per batch; remaining output space is checked before the next batch. Matches hidden by native read truncation remain in the recovery index.
+  - Windows prioritize uncovered regex patterns, then diminishing returns for repeated patterns, line cost, and file diversity. Canonical paths and line numbers break ties deterministically. `maxFiles` bounds selected files without excluding valuable windows in other files before ranking.
+  - These bounds cover requested lines and returned bytes, not a fixed number of filesystem bytes or tokens.
+- **`readGuard` inspection preflight**:
+  Only supported outline languages trigger extra inspection. The fs service resolves and stats the target before reading, preferring bounded `readBytes` or text streaming. Oversized files (`maxInspectBytes`, default 512KB), cancellation, absent files, and service denials skip the outline while preserving the native read result. Service failures never fall back to local disk. Older readText-only services are supported after size preflight, subject to file-growth races between stat and read.
+  - Default `astOutline: "auto"` keeps ordinary files on the lexical path and invokes ast-grep on demand for JSX/TSX, TS decorators/exported namespaces, or declaration-like files with empty lexical results. Set `"off"` to disable or `"always"` to force AST for supported languages. Both levels prioritize top-level exports and sample across the unread tail.
+  - The CLI receives only the fs-authorized snapshot on stdin, never the target path. It uses fixed plugin configuration, disables custom language libraries, and runs without a shell. Defaults `astTimeoutMs: 750` and `astMaxOutputBytes: 262144` bound time/output. Cancellation terminates the child; missing CLI, timeout, and errors fall back to lexical results. `astGrepCommand` accepts an executable name or absolute path; the CLI must support `outline --stdin --json`.
+  - Current bundled ast-grep rules expose TS namespaces without children; lexical child declarations inside AST-confirmed namespace ranges are retained for navigation. AST successes and lexical fallbacks share the version LRU, preventing repeated launches for the same cached file version. Version changes, mutations, or eviction permit another attempt. Inspect `astAttempts/astSucceeded/astFallbacks/astTimeouts/outlineCacheHits` counters.
+  - Run `npm run benchmark:outline -- outline-benchmark.windows.json` for real-CLI first-invocation, repeated uncached, lexical, and version-cache timings with 20 repeated samples. See `outline-benchmark.md` for methodology and local Windows results.
+  - Parsed-symbol caches are isolated by session, fs backend, resolved identity, language, and version. Every lookup still stats the file; misses validate the version again after reading. Defaults: `maxCacheEntries: 32`, `maxCacheBytes: 262144`. Cached entries are filtered for the current truncation offset. Unversioned targets are not cached; mutation/code-execution tools and session disposal clear the cache. Set `maxCacheEntries: 0` to disable it. The byte cap measures serialized payload, not JS heap usage.
+  - The official standalone `session/disposed` event releases that session's backend caches, retained references, and statistics. Plugin disposal clears remaining caches. Inspections in flight cannot repopulate caches or inject late outlines after disposal; other sessions remain isolated.
+  - `getStats(session)` returns a detached per-turn snapshot, also exposed as telemetry `summary.readGuard` (`null` when disabled). `outlineCacheLookups = outlineCacheHits + outlineCacheMisses`; `outlineCacheHitRate = hits / lookups` is in [0, 1], or `null` without lookups. Only enabled caches with valid identity/version after successful preflight count as lookups. Absent, stale, or evicted entries count as misses even if the subsequent read or parse fails. Disabled, unidentified, unversioned, and standalone local backends count as `outlineCacheBypasses`; rejected preflights count as neither. Ordinary and targeted reads do not inflate the lookup denominator.
+  - `outlineCacheInvalidations` counts mutation/bash/eval events that clear an existing session cache group, including in-flight inspections. No group means no invalidation; version mismatches count as misses, and disposal cleanup does not count as invalidation. Counters reset on `turn/start` while caches survive turns. These metrics describe local outline caching separately from provider input caching.
 - **`edit_batch`**:
   Sequentially applies up to 10 targeted literal text replacements across single or multiple files in one round trip, with pre-flight same-file simulation, `atomic` abort support, and automatic line-numbered recovery hints on mismatch.
 - **Inherited Security & Sandboxing**:

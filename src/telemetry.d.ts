@@ -4,6 +4,7 @@ import type { RuntimePolicySummary } from './runtime-policy.d.ts';
 import type { FileMutationPolicySummary } from './file-mutation-policy.d.ts';
 import type { FailureRecoveryStats } from './failure-recovery.d.ts';
 import type { CompositeToolsStats } from './composite-tools.d.ts';
+import type { ReadGuardStats } from './read-guard.d.ts';
 
 export interface TelemetryOptions {
   enabled?: boolean;
@@ -42,6 +43,7 @@ export interface TurnTelemetrySummary {
   fileMutationPolicy: FileMutationPolicySummary | null;
   failureRecovery: FailureRecoveryStats | null;
   compositeTools: CompositeToolsStats | null;
+  readGuard: ReadGuardStats | null;
 }
 
 export interface TurnComparisonDelta {

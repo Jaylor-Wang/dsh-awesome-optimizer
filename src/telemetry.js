@@ -252,7 +252,8 @@ export class AgentTelemetryManager {
         runtimePolicy: null,
         fileMutationPolicy: null,
         failureRecovery: null,
-        compositeTools: null
+        compositeTools: null,
+        readGuard: null
       };
     }
 
@@ -310,7 +311,8 @@ export class AgentTelemetryManager {
       runtimePolicy: this.ctx?.get?.('runtimePolicy')?.getSummary(targetSession, state.turn) ?? null,
       fileMutationPolicy: this.ctx?.get?.('fileMutationPolicy')?.getSummary(targetSession, state.turn) ?? null,
       failureRecovery: this.ctx?.get?.('failureRecovery')?.getStats(targetSession) ?? null,
-      compositeTools: this.ctx?.get?.('compositeTools')?.getStats(targetSession) ?? null
+      compositeTools: this.ctx?.get?.('compositeTools')?.getStats(targetSession) ?? null,
+      readGuard: this.ctx?.get?.('readGuard')?.getStats(targetSession) ?? null
     };
   }
 }

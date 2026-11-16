@@ -21,8 +21,8 @@ const config: AgentOptimizerConfig = {
   fileMutationPolicy: { mode: 'observe', minLargeWriteBytes: 8192 },
   recoverFailedWrites: true,
   editRecovery: { enabled: true, contextLines: 6, maxSnippetLines: 20 },
-  readGuard: { enabled: true, maxLineChars: 1500, injectTailOutline: true, maxOutlineEntries: 20 },
-  compositeTools: { enabled: true, findAndRead: true, maxPatterns: 5, defaultContextLines: 5, maxFiles: 5, maxWindows: 10 },
+  readGuard: { enabled: true, maxLineChars: 1500, injectTailOutline: true, maxOutlineEntries: 20, maxCacheEntries: 32, maxCacheBytes: 262144, astOutline: 'auto', astTimeoutMs: 750, astMaxOutputBytes: 262144, astGrepCommand: 'ast-grep' },
+  compositeTools: { enabled: true, findAndRead: true, maxPatterns: 5, defaultContextLines: 5, maxFiles: 5, maxWindows: 10, maxWindowLines: 120, maxReadLines: 600, readConcurrency: 3 },
   persistentEval: { enabled: true, python: true, node: true, timeoutMs: 15000 },
   convergence: { enabled: true, injectGuidance: true, softStepBudget: 8 },
   customPrompt: { enabled: true, placement: 'replace-all', includeCliFacts: false },
@@ -75,11 +75,20 @@ const subConfigs: [
   { enabled: true },
   { contextLines: 5, maxSnippetLines: 15, maxHintBytes: 1024 },
   { maxLineChars: 1500, injectTailOutline: true, maxOutlineEntries: 20 },
-  { maxPatterns: 5, defaultContextLines: 5, maxFiles: 5, maxWindows: 10, maxLineChars: 1500, maxTotalBytes: 24576, atomicEdits: true },
+  { maxPatterns: 5, defaultContextLines: 5, maxFiles: 5, maxWindows: 10, maxLineChars: 1500, maxTotalBytes: 24576, maxWindowLines: 120, maxReadLines: 600, readConcurrency: 3, atomicEdits: true },
   { pythonCommand: 'python3', timeoutMs: 5000 },
   { softStepBudget: 6 },
   { placement: 'replace-all', includeCliFacts: true, extraEnvironmentFacts: ['- Custom fact'] },
-  { trackStreams: true }
+  { trackStreams: true, onTurnSummary(summary) {
+    const rate: number | null | undefined = summary.readGuard?.outlineCacheHitRate;
+    const counts: number[] | null = summary.readGuard && [
+      summary.readGuard.outlineCacheLookups, summary.readGuard.outlineCacheHits,
+      summary.readGuard.outlineCacheMisses, summary.readGuard.outlineCacheBypasses,
+      summary.readGuard.outlineCacheInvalidations
+    ];
+    void rate;
+    void counts;
+  } }
 ];
 
 const workerExecOptions: StdioWorkerExecuteOptions = {

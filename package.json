@@ -1,6 +1,6 @@
 {
   "name": "dsh-awesome-optimizer",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Runtime policy guards, composite batch tooling, persistent Python & Node eval daemons, soft convergence guidance, reactive custom prompt engine, and A/B telemetry plugin for the official DeepSeek Harness (dsh) agent loop.",
   "type": "module",
   "main": "src/index.js",
@@ -59,8 +59,11 @@
     "locale/*.json",
     "scripts/typecheck.mjs",
     "scripts/benchmark.mjs",
+    "scripts/benchmark-outline.mjs",
     "README.md",
     "README.zh.md",
+    "outline-benchmark.md",
+    "outline-benchmark.windows.json",
     "LICENSE"
   ],
   "dsh": {
@@ -75,7 +78,8 @@
     "setup:local": "node scripts/setup-local.mjs",
     "test": "node --test --test-concurrency=1 --test-timeout=10000 test/*.test.js",
     "typecheck": "node scripts/typecheck.mjs",
-    "benchmark": "node scripts/benchmark.mjs"
+    "benchmark": "node scripts/benchmark.mjs",
+    "benchmark:outline": "node scripts/benchmark-outline.mjs"
   },
   "author": "Jaylor-Wang",
   "license": "MIT",
