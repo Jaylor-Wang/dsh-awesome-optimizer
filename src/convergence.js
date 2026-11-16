@@ -15,7 +15,7 @@ export const GUIDANCE = [
   'This efficiency guidance NEVER overrides the user, correctness, permission checks, required verification, or cancellation.'
 ].join('\n');
 
-export const REMINDER = 'Accelerate execution: batch remaining actions and conclude if criteria are met; NEVER omit verification.';
+export const REMINDER = 'Batch remaining actions; conclude only if criteria are met; NEVER omit verification.';
 
 export const ConvergenceConfig = z.object({
   enabled: z.boolean().default(true),
@@ -146,7 +146,7 @@ export function applyConvergence(ctx, raw = {}) {
       source: {
         kind: SOURCE,
         form: 'notice',
-        summary: 'Accelerate execution and conclude when criteria are met.'
+        summary: 'Batch remaining actions; conclude only if criteria are met.'
       }
     });
     return { ...decision, messages: [...decision.messages, reminder] };

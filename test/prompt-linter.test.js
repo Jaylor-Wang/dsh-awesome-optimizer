@@ -74,7 +74,7 @@ test('fixPrompt safely repairs weak modals, legacy jargon, and non-loaded tool p
 test('lintPrompt returns 100 for clean high-signal prompt', () => {
   const cleanPrompt = [
     '# AUTONOMOUS AGENT CORE DIRECTIVE',
-    '- Prioritize direct action over speculation: investigate via concurrent tools (fs, bash, skills) without orchestration overhead.',
+    '- MUST act directly rather than speculate: investigate via concurrent tools (fs, bash, skills) without orchestration overhead.',
     '- Shell: ONLY `bash`. Launch `pwsh.exe` from `bash` when needed.',
     '- Web: Research/fetch STRICTLY via skills (`agent-reach`, `gh`, `opencli-*`, `smart-search`) or bash CLIs.'
   ].join('\n');
