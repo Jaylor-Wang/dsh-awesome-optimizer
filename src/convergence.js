@@ -7,7 +7,7 @@ export const SOURCE = 'optimizer-convergence';
 
 export const GUIDANCE = [
   "Work toward the user's completion criteria with as few model round trips as practical.",
-  'Batch independent reads, searches, and checks in a single response when their inputs are known; use find_and_read when searching code and inspecting surrounding lines together. Preserve dependencies and exclusive tool barriers.',
+  'For searches across multiple source files that need matching code and surrounding context, use find_and_read. For known files, batch independent read calls in parallel. Keep dependent inspections and retries sequential.',
   'Command chaining: Run heavy tasks (npm test, npm run build, vitest, npm publish) standalone to prevent Windows deadlocks; chain lightweight commands via && (git add ... && git commit ... && git push) to eliminate round trips.',
   'Before emitting a large payload or calculation, produce deliverables or reusable scripts to disk using native write and execute by file path. NEVER embed complete files, calculations, or large scripts in shell arguments (node -e, python -c, pwsh -Command).',
   'For localized revisions on existing files, reuse context already in the conversation and prefer native edit (or edit_batch for multi-file/multi-location revisions) with an unambiguous match over rewriting the entire file.',

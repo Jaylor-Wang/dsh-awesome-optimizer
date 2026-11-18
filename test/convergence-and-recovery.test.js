@@ -31,7 +31,8 @@ test('convergence guidance injects one-time soft step budget notice without hard
       .filter(b => b.type === 'text')
       .map(b => b.text)
       .join('\n');
-    assert.match(firstRequestText, /Batch independent reads/);
+    assert.match(firstRequestText, /For searches across multiple source files that need matching code and surrounding context, use find_and_read/);
+    assert.match(firstRequestText, /For known files, batch independent read calls in parallel/);
 
     // Periodic reminder injected at step 2 and step 4
     const reminders = host.events.filter(
