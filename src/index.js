@@ -10,6 +10,7 @@ import { applyPersistentEval, PersistentEvalConfig, EVAL_PYTHON_TOOL, EVAL_NODE_
 import { applyConvergence, ConvergenceConfig, SOURCE as CONVERGENCE_SOURCE, GUIDANCE, REMINDER } from './convergence.js';
 import { applyCustomPrompt, CustomPromptConfig, CustomPromptManager, SECTION_NAME as CUSTOM_PROMPT_SECTION, ENVIRONMENT_FACTS_SECTION, formatEnvironmentFacts, detectPythonEnv, resetPythonCacheForTesting } from './custom-prompt.js';
 import { applyTelemetry, TelemetryConfig, AgentTelemetryManager, compareTurnSummaries } from './telemetry.js';
+import { applyContextCompaction, ContextCompactionConfig } from './context-compaction.js';
 
 import { lintPrompt, fixPrompt, lintPromptFile, RULE_IDS as PROMPT_LINT_RULES } from './prompt-linter.js';
 
@@ -29,7 +30,8 @@ export const Config = z.object({
   persistentEval: PersistentEvalConfig.default({}),
   convergence: ConvergenceConfig.default({}),
   customPrompt: CustomPromptConfig.default({}),
-  telemetry: TelemetryConfig.default({})
+  telemetry: TelemetryConfig.default({}),
+  contextCompaction: ContextCompactionConfig.default({})
 });
 
 /**
@@ -86,6 +88,10 @@ export function apply(ctx, raw = {}) {
   const telemetryConfig = raw.telemetry ?? config.telemetry ?? {};
   const telemetryManager = applyTelemetry(ctx, telemetryConfig);
   if (telemetryManager) ctx.provide('agentTelemetry', telemetryManager);
+
+  const compactionConfig = raw.contextCompaction ?? config.contextCompaction ?? {};
+  const compactionManager = applyContextCompaction(ctx, compactionConfig);
+  if (compactionManager) ctx.provide('contextCompaction', compactionManager);
 }
 
 export {
@@ -134,7 +140,9 @@ export {
   lintPromptFile,
   PROMPT_LINT_RULES,
   GUIDANCE,
-  REMINDER
+  REMINDER,
+  applyContextCompaction,
+  ContextCompactionConfig
 };
 
 export default { name, inject, Config, apply };

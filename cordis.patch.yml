@@ -52,3 +52,7 @@
         telemetry:
           enabled: true
           trackStreams: true
+        # Use the host compaction backend to bound long-session context.
+        contextCompaction:
+          enabled: true
+          recoverOverflow: true

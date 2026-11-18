@@ -12,13 +12,14 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
 
 ---
 
-## Highlights in v3.3.0
+## Highlights in v3.4.0
 
 - **Opt-in HTTP cache diagnostics**: [Capture request hashes and upstream usage](cache-diagnostics.md) for OpenAI-compatible `/chat/completions` to compare message prefixes and configuration across turns. Missing cache counters remain distinct from explicit zero; prompts, responses, image bytes, and credentials are never logged.
 - **Bounded, isolated diagnostics**: Asynchronous logging has file and queue limits, flushes on disposal, and stops with one warning on failure. Initialization failures preserve telemetry; response URL, redirect/type metadata, and clone metadata are preserved.
 - **Accurate prefix telemetry**: Detects message replacement, in-place mutation, and changes across turns without stale object-identity digest caching.
 - **Stricter batch preflight**: Rejects empty or unchanged replacement strings before dispatching edits, keeping atomic preflight consistent with native edit validation.
-- **Verification**: 160 tests passed; public declaration type checking passed. No new package dependencies.
+- **Context growth control**: Bridges the host compaction service into the optimizer, triggering pressure checks before steps and compact-and-retry recovery after confirmed context overflow. It is opt-in at the plugin layer and never mutates the official agent loop.
+- **Verification**: 163 tests passed; public declaration type checking passed. No new package dependencies.
 
 ---
 

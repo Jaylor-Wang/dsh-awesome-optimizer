@@ -9,6 +9,7 @@ import type { PersistentEvalOptions, PersistentEvalService } from './persistent-
 import type { ConvergenceOptions } from './convergence.d.ts';
 import type { CustomPromptOptions } from './custom-prompt.d.ts';
 import type { TelemetryOptions } from './telemetry.d.ts';
+import type { ContextCompactionOptions, ContextCompactionService } from './context-compaction.d.ts';
 
 export interface AgentOptimizerConfig {
   enabled?: boolean;
@@ -24,6 +25,7 @@ export interface AgentOptimizerConfig {
   convergence?: ConvergenceOptions;
   customPrompt?: CustomPromptOptions;
   telemetry?: TelemetryOptions;
+  contextCompaction?: ContextCompactionOptions;
 }
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -122,6 +124,12 @@ export {
   type TurnTelemetrySummary,
   type TurnComparisonDelta
 } from './telemetry.d.ts';
+export {
+  applyContextCompaction,
+  ContextCompactionConfig,
+  type ContextCompactionOptions,
+  type ContextCompactionService
+} from './context-compaction.d.ts';
 export {
   EVAL_PYTHON_TOOL,
   EVAL_NODE_TOOL,
