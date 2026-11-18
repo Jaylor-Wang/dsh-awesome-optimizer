@@ -240,6 +240,7 @@ test('edit_batch tolerates partial failures without losing successful edits', as
     assert.equal(toolResults.length, 1);
     assert.equal(toolResults[0].data.message.isError, false);
     const output = toolResults[0].data.message.content.map(b => b.text).join('\n');
+    assert.match(output, /^\[PARTIAL\].*1\/2 edits succeeded/);
     assert.match(output, /Edited valid\.txt/);
     assert.match(output, /\[ERROR\]/);
   } finally {
@@ -374,6 +375,127 @@ test('edit_batch atomic=true aborts entire cross-file batch on pre-flight failur
     await host.dispose();
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('strict edit_batch aborts before dispatch when preflight cannot verify a target', async t => {
+  for (const mode of ['denied', 'no-reader', 'no-identity', 'escalation', 'unpaired-justification']) {
+    await t.test(mode, async () => {
+      const host = await createTestRuntime({
+        files: { 'a.txt': 'alpha', 'b.txt': 'beta' },
+        configureTools(ctx) {
+          const fsService = ctx.get('fs');
+          if (mode === 'no-identity') fsService.resolve = async () => ({});
+          if (mode !== 'no-reader') {
+            fsService.readFile = async filePath => {
+              if (mode === 'denied' && filePath === 'b.txt') throw Object.assign(new Error('Read denied'), { code: 'EACCES' });
+              return filePath === 'a.txt' ? 'alpha' : 'beta';
+            };
+          }
+        },
+        script: [[call('strict', 'edit_batch', { atomic: true, edits: [
+          { file_path: 'a.txt', old_string: 'alpha', new_string: 'ALPHA' },
+          { file_path: 'b.txt', old_string: 'beta', new_string: 'BETA',
+            ...(mode === 'escalation' ? { sandbox_permissions: 'workspace-write' } : {}),
+            ...(['escalation', 'unpaired-justification'].includes(mode) ? { justification: 'Request access' } : {}) }
+        ] })], [{ type: 'text', text: 'Done.' }]]
+      });
+      try {
+        await host.run('Check that unverifiable targets stop strict batches');
+        assert.equal(host.calls.filter(c => c.name === 'edit').length, 0);
+        assert.equal(host.virtualFs.get('a.txt'), 'alpha');
+        assert.equal(host.virtualFs.get('b.txt'), 'beta');
+        const result = host.events.find(e => e.type === 'tool/result').data.message;
+        assert.equal(result.isError, true);
+        assert.match(result.content[0].text, /Atomic edit_batch aborted/);
+      } finally { await host.dispose(); }
+    });
+  }
+});
+
+test('strict edit_batch simulates host aliases, CRLF, and literal replacement text together', async () => {
+  const host = await createTestRuntime({
+    files: { 'actual.txt': 'one\ntwo' },
+    configureTools(ctx) {
+      const fsService = ctx.get('fs');
+      fsService.resolve = async displayPath => ({ displayPath, targetKey: 'actual.txt' });
+      fsService.readText = async () => 'one\r\ntwo';
+    },
+    editHandler({ old_string, new_string }, _exec, files) {
+      const source = files.get('actual.txt');
+      const old = old_string.replaceAll('\r\n', '\n');
+      assert.ok(source.includes(old));
+      files.set('actual.txt', source.split(old).join(new_string));
+      return 'Edited actual.txt';
+    },
+    script: [[call('alias', 'edit_batch', { atomic: true, edits: [
+      { file_path: 'actual.txt', old_string: 'one\r\ntwo', new_string: '$&' },
+      { file_path: 'alias.txt', old_string: '$&', new_string: 'done' }
+    ] })], [{ type: 'text', text: 'Done.' }]]
+  });
+  try {
+    await host.run('Edit the same filesystem identity using two aliases');
+    assert.equal(host.virtualFs.get('actual.txt'), 'done');
+    assert.equal(host.calls.filter(c => c.name === 'edit').length, 2);
+    assert.equal(host.events.find(e => e.type === 'tool/result').data.message.isError, false);
+  } finally { await host.dispose(); }
+});
+
+test('strict edit_batch stops on a native execution failure and reports changes already applied', async () => {
+  const errors = [];
+  const host = await createTestRuntime({
+    files: { 'a.txt': 'a', 'b.txt': 'b', 'c.txt': 'c' },
+    configureTools(ctx) {
+      ctx.get('fs').readFile = async filePath => filePath[0];
+      ctx.on('tools/result', (exec, result) => {
+        if (exec.name === 'edit_batch' && result.isError) errors.push(result.error?.info?.code);
+      });
+    },
+    editHandler(args, _exec, files) {
+      if (args.file_path === 'b.txt') throw new Error('Native edit denied at dispatch');
+      files.set(args.file_path, args.new_string);
+      return `Edited ${args.file_path}`;
+    },
+    script: [[call('strict-partial', 'edit_batch', { atomic: true, edits: ['a', 'b', 'c'].map(letter => ({
+      file_path: `${letter}.txt`, old_string: letter, new_string: letter.toUpperCase()
+    })) })], [{ type: 'text', text: 'Done.' }]]
+  });
+  try {
+    await host.run('Stop after the first dispatch failure');
+    assert.deepEqual(host.calls.filter(c => c.name === 'edit').map(c => c.args.file_path), ['a.txt', 'b.txt']);
+    assert.deepEqual([...host.virtualFs.values()], ['A', 'b', 'c']);
+    const result = host.events.find(e => e.type === 'tool/result').data.message;
+    assert.equal(result.isError, true);
+    const output = result.content.map(block => block.text).join('\n');
+    assert.match(output, /\[PARTIAL\].*1\/3 edits succeeded/);
+    assert.match(output, /Skipped edit #3/);
+    assert.deepEqual(errors, ['EDIT_BATCH_PARTIAL']);
+    const stats = host.compositeTools.getStats(host.agent.session);
+    assert.equal(stats.editsSucceeded, 1);
+    assert.equal(stats.editsFailed, 2);
+  } finally { await host.dispose(); }
+});
+
+test('strict edit_batch preserves the confirmed partial result when cancelled between edits', async () => {
+  const controller = new AbortController();
+  const host = await createTestRuntime({
+    files: { 'a.txt': 'a', 'b.txt': 'b' },
+    configureTools(ctx) {
+      ctx.get('fs').readFile = async filePath => filePath[0];
+      ctx.on('tools/result', (exec, result) => {
+        if (exec.name === 'edit' && !result.isError) controller.abort();
+      });
+    }
+  });
+  try {
+    const editBatch = host.ctx.tools.get('edit_batch', host.agent);
+    await assert.rejects(editBatch.execute({ atomic: true, edits: ['a', 'b'].map(letter => ({
+      file_path: `${letter}.txt`, old_string: letter, new_string: letter.toUpperCase()
+    })) }, {
+      agent: host.agent, callId: 'cancel', rootCallId: 'cancel', signal: controller.signal, deferContext() {}
+    }), error => error.code === 'EDIT_BATCH_PARTIAL' && /Skipped edit #2: batch cancelled/.test(error.message));
+    assert.deepEqual([...host.virtualFs.values()], ['A', 'b']);
+    assert.equal(host.calls.filter(c => c.name === 'edit').length, 1);
+  } finally { await host.dispose(); }
 });
 
 test('edit_batch skips subsequent same-file edits after a sandbox-denied preflight', async () => {

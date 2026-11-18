@@ -18,6 +18,7 @@ export interface CompositeToolsOptions {
   maxBatchEdits?: number;
   maxLineChars?: number;
   maxTotalBytes?: number;
+  /** Require complete preflight and stop on the first execution failure. This does not roll back applied edits. */
   atomicEdits?: boolean;
 }
 

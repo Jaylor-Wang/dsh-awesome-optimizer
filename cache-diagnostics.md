@@ -10,6 +10,12 @@ Response records contain status and allowlisted request IDs. Usage records conta
 
 Limits: 8 MiB per log file, a 256 KiB asynchronous write queue, 128 previous session/route entries, and 1 MiB per buffered SSE event or JSON response. Reaching either log/queue limit stops capture and emits one host warning; use a new log path and reload to resume. Queued writes drain on disposal. Write failure stops capture with one warning; initialization failure disables diagnostics while preserving telemetry. Oversized events emit capture-gap and stop parsing that response. Response URL, redirected/type metadata and clone metadata are preserved. No automatic retry or inference warmup occurs. A restart/reload is required after source changes; configuration on disk alone does not prove the running process loaded the observer.
 
+## Turn telemetry vs. HTTP diagnostics
+
+Turn summaries use the host adapter's normalized usage events, not the HTTP log. Adapter `inputTokens` is uncached input; a raw HTTP `prompt_tokens` value may be total input, including cache hits. Each cache total (`usage.cacheReadTokens` / `usage.cacheWriteTokens`) sums the last reported value per stream attempt. `null` means no attempt reported that field; explicit zero counts as a report. `cacheUsageCoverage` gives `readReported`, `writeReported`, and `streamAttempts`. If either numerator is below the denominator, its total covers only the reporting attempts. With stream tracking disabled or unavailable, coverage is zero and both totals are `null`.
+
+An adapter may omit a counter even when HTTP sent an explicit zero, and an adapter stream attempt need not map one-to-one to a network request. Use HTTP JSONL for per-request upstream fields and prefix/config checks. Neither source can infer a provider cache outcome from a missing counter.
+
 Interpretation:
 - prefixStable=false: inspect the first changed message and request conversion.
 - Stable messages/config plus absent cache counters: investigate gateway usage reporting.

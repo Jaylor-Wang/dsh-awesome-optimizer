@@ -138,6 +138,70 @@ test('telemetry exposes null readGuard summaries when no session or guard is ava
   assert.equal(manager.getSummary(session).readGuard, null);
 });
 
+test('querying an unavailable turn leaves live telemetry and policy state untouched', async () => {
+  const host = await createTestRuntime({
+    script: [[{ type: 'text', text: 'First turn.' }],
+      [call('read-current', 'read', { file_path: 'README.md' })],
+      async function* () {
+        const session = host.agent.session;
+        const current = host.telemetry.getSummary(session);
+        assert.equal(current.toolCalls, 1);
+        assert.equal(current.runtimePolicy.toolExecutions, 1);
+        assert.equal(current.fileMutationPolicy.observedFiles, 1);
+        for (const unavailable of [current.turn - 1, current.turn + 1]) {
+          const empty = host.telemetry.getSummary(session, unavailable);
+          assert.equal(empty.turn, unavailable);
+          assert.equal(empty.modelRequests, 0);
+          assert.equal(empty.runtimePolicy, null);
+          assert.equal(host.runtimePolicy.getSummary(session, unavailable).toolExecutions, 0);
+          assert.equal(host.fileMutationPolicy.getSummary(session, unavailable).observedFiles, 0);
+        }
+        yield { type: 'usage', usage: { inputTokens: 17, outputTokens: 2 } };
+        yield { type: 'finish', reason: { kind: 'stop' } };
+      }]
+  });
+  try {
+    await host.run('First turn');
+    await host.run('Second turn');
+    const current = host.telemetry.getSummary(host.agent.session);
+    assert.equal(current.turnOutcome, 'completed');
+    assert.equal(current.modelRequests, 2);
+    assert.equal(current.toolCalls, 1);
+    assert.equal(current.runtimePolicy.toolExecutions, 1);
+    assert.equal(current.fileMutationPolicy.observedFiles, 1);
+    assert.equal(current.usage.inputTokens, 137);
+  } finally { await host.dispose(); }
+});
+
+test('turn cache coverage counts explicit zero and excludes missing counters per stream attempt', async () => {
+  const manager = new AgentTelemetryManager({ get: () => undefined });
+  const session = { id: 'cache-coverage' };
+  manager.onSessionEvent(session, { type: 'turn/start', data: { turn: 1 } });
+  const report = async (...snapshots) => {
+    for await (const _ of manager.wrapStream({ sessionId: session.id }, async function* () {
+      for (const usage of snapshots) yield { type: 'usage', usage };
+    })) {}
+  };
+  await report({ inputTokens: 148358, outputTokens: 166 });
+  assert.equal(manager.getSummary(session).usage.cacheReadTokens, null);
+  assert.equal(manager.getSummary(session).usage.cacheWriteTokens, null);
+  assert.deepEqual(manager.getSummary(session).cacheUsageCoverage, { streamAttempts: 1, readReported: 0, writeReported: 0 });
+  await report({ cacheReadTokens: 0, cacheWriteTokens: 0 });
+  assert.equal(manager.getSummary(session).usage.cacheReadTokens, 0);
+  await report({ cacheReadTokens: 30 }, { cacheReadTokens: 38 }, { inputTokens: 50 });
+  await report();
+  const summary = manager.getSummary(session);
+  assert.equal(summary.usage.cacheReadTokens, 38);
+  assert.equal(summary.usage.cacheWriteTokens, 0);
+  assert.deepEqual(summary.cacheUsageCoverage, { streamAttempts: 4, readReported: 2, writeReported: 1 });
+  manager.onSessionEvent(session, { type: 'turn/start', data: { turn: 2 } });
+  manager.onSessionEvent(session, { type: 'assistant/message', data: { turn: 2 } });
+  const untracked = manager.getSummary(session);
+  assert.equal(untracked.modelRequests, 1);
+  assert.equal(untracked.usage.cacheReadTokens, null);
+  assert.deepEqual(untracked.cacheUsageCoverage, { streamAttempts: 0, readReported: 0, writeReported: 0 });
+});
+
 test('agentTelemetry attributes interleaved streams to their session IDs', async () => {
   const manager = new AgentTelemetryManager({ get: () => undefined });
   const sessionA = { id: 'session-a' };
@@ -173,6 +237,7 @@ test('cordis.patch.yml and source files preserve official loop ownership and nev
   const patchText = fs.readFileSync(path.join(root, 'cordis.patch.yml'), 'utf8');
   assert.doesNotMatch(patchText, /disabled:\s*true/);
   assert.match(patchText, /name:\s*dsh-awesome-optimizer/);
+  assert.match(patchText, /persistentEval:\s*\n\s*enabled:\s*true/);
 
   const srcDir = path.join(root, 'src');
   for (const entry of fs.readdirSync(srcDir)) {

@@ -1,4 +1,4 @@
-import { test, describe } from 'node:test';
+import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
@@ -20,6 +20,7 @@ function launchWorker(command, args) {
     windowsHide: true
   });
 
+  const closed = new Promise(resolve => child.once('close', resolve));
   const rl = readline.createInterface({
     input: child.stdout,
     terminal: false
@@ -70,6 +71,7 @@ function launchWorker(command, args) {
     },
     kill() {
       child.kill('SIGKILL');
+      return closed;
     },
     getStderr: () => stderrOutput
   };
@@ -78,9 +80,10 @@ function launchWorker(command, args) {
 describe('Persistent Eval Workers (Phase 1)', () => {
   describe('Python Worker (py_worker.py)', () => {
     let pyClient;
+    before(() => { pyClient = launchWorker('python', ['-u', PY_WORKER_PATH]); });
+    after(() => pyClient?.kill());
 
     test('should start and send ready signal', async () => {
-      pyClient = launchWorker('python', ['-u', PY_WORKER_PATH]);
       const readyMsg = await pyClient.ready;
       assert.equal(readyMsg.status, 'ready');
       assert.ok(typeof readyMsg.pid === 'number');
@@ -253,17 +256,14 @@ f"【{title}】动画计算完成"
       assert.equal(res.success, true);
       assert.equal(res.resultRepr, '0.3');
     });
-
-    test('teardown python worker', () => {
-      if (pyClient) pyClient.kill();
-    });
   });
 
   describe('Node.js Worker (node_worker.mjs)', () => {
     let nodeClient;
+    before(() => { nodeClient = launchWorker('node', [NODE_WORKER_PATH]); });
+    after(() => nodeClient?.kill());
 
     test('should start and send ready signal', async () => {
-      nodeClient = launchWorker('node', [NODE_WORKER_PATH]);
       const readyMsg = await nodeClient.ready;
       assert.equal(readyMsg.status, 'ready');
       assert.ok(typeof readyMsg.pid === 'number');
@@ -393,10 +393,6 @@ let retained = 7;
       });
       assert.equal(res3.success, true);
       assert.equal(res3.result, 42);
-    });
-
-    test('teardown node worker', () => {
-      if (nodeClient) nodeClient.kill();
     });
   });
 });

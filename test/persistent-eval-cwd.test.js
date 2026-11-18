@@ -101,7 +101,7 @@ for (const kernel of kernels) {
     const b = { id: `${kernel.name}-session-B` };
     const initialDirectories = new Map([[a.id, dirs.a], [b.id, dirs.b]]);
     const ctx = context(session => initialDirectories.get(session.id));
-    const service = applyPersistentEval(ctx, { python: kernel.name === 'python', node: kernel.name === 'node' });
+    const service = applyPersistentEval(ctx, { enabled: true, python: kernel.name === 'python', node: kernel.name === 'node' });
     t.after(async () => { service.destroy(); await dirs.cleanup(); });
     const tool = ctx.tools.get(`eval_${kernel.name}`);
     const evaluate = (session, args, signal) => tool.execute(args, { agent: { session }, signal });

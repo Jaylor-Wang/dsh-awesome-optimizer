@@ -48,16 +48,39 @@ describe('Persistent Eval Integration & Watchdog (Phase 2 & 3)', () => {
     }
   });
 
-  test('registers eval_python and eval_node tools in DSH tools catalog', () => {
-    const { ctx, registeredTools } = createMockContext();
-    serviceInstance = applyPersistentEval(ctx, { enabled: true });
+  test('registers and prewarms both workers on the official loop with default settings', async () => {
+    const host = await createTestRuntime();
+    try {
+      for (const name of [EVAL_NODE_TOOL, EVAL_PYTHON_TOOL]) {
+        const tool = host.ctx.tools.get(name, host.agent);
+        assert.equal(tool?.name, name);
+        assert.deepEqual(tool.parameters.required, ['code']);
+      }
+      await host.run('Run a turn without calling either eval tool');
+      const service = host.ctx.get('persistentEval');
+      const runners = service.pool.runnersBySession.get(host.agent.session.id);
+      assert.equal(runners?.node?.launchCount, 1);
+      assert.equal(runners?.python?.launchCount, 1);
+      await Promise.all([runners.node.ensureStarted(), runners.python.ensureStarted()]);
+    } finally {
+      await host.dispose();
+    }
+  });
 
-    assert.ok(registeredTools.has(EVAL_PYTHON_TOOL));
-    assert.ok(registeredTools.has(EVAL_NODE_TOOL));
-
-    const pyTool = registeredTools.get(EVAL_PYTHON_TOOL);
-    assert.equal(pyTool.name, EVAL_PYTHON_TOOL);
-    assert.equal(pyTool.parameters.required[0], 'code');
+  test('explicit opt-out skips tool registration and worker lifecycle hooks', async () => {
+    const { ctx, registeredTools, eventListeners } = createMockContext();
+    assert.equal(applyPersistentEval(ctx, { enabled: false, python: true, node: true }), null);
+    assert.equal(registeredTools.size, 0);
+    assert.equal(eventListeners.size, 0);
+    const host = await createTestRuntime({ optimizerConfig: { persistentEval: { enabled: false } } });
+    try {
+      await host.run('Run with persistent eval disabled');
+      assert.equal(host.ctx.get('persistentEval'), undefined);
+      assert.equal(host.ctx.tools.get(EVAL_NODE_TOOL, host.agent), undefined);
+      assert.equal(host.ctx.tools.get(EVAL_PYTHON_TOOL, host.agent), undefined);
+    } finally {
+      await host.dispose();
+    }
   });
 
   test('eval_python executes stateful calculations across turns', async () => {
@@ -114,34 +137,7 @@ fetched + globalThis.offset;
     assert.equal(out2.trim(), '=> 142');
   });
 
-  test('watchdog kills infinite loop and automatically restarts healthy worker', async () => {
-    const { ctx, registeredTools } = createMockContext();
-    // Arm with an ultra-short 300ms timeout for test speed
-    serviceInstance = applyPersistentEval(ctx, {
-      enabled: true,
-      timeoutMs: 300
-    });
-
-    const pyTool = registeredTools.get(EVAL_PYTHON_TOOL);
-    const mockSession = { id: 'sess-timeout-1' };
-    const execContext = { session: mockSession };
-
-    // Trigger deliberate infinite loop
-    const timeoutOut = await pyTool.execute({
-      code: 'while True: pass'
-    }, execContext);
-
-    assert.ok(timeoutOut.includes('Execution timed out after 300ms'));
-    assert.ok(timeoutOut.includes('terminated and will be restarted cleanly'));
-
-    // Verify self-healing: subsequent invocation immediately succeeds!
-    const healedOut = await pyTool.execute({
-      code: '10 + 20'
-    }, execContext);
-    assert.equal(healedOut.trim(), '=> 30');
-  });
-
-  test('queued tasks recover cleanly when preceding task crashes or times out', async () => {
+  test('watchdog reports the configured timeout and restarts the worker for a queued task', async () => {
     const { ctx, registeredTools } = createMockContext();
     serviceInstance = applyPersistentEval(ctx, {
       enabled: true,
@@ -151,15 +147,19 @@ fetched + globalThis.offset;
     const pyTool = registeredTools.get(EVAL_PYTHON_TOOL);
     const mockSession = { id: 'sess-queued-recovery' };
     const execContext = { session: mockSession };
+    const runner = serviceInstance.pool.getPythonRunner(mockSession);
+    assert.equal(runner.launchCount, 0);
 
-    // Concurrently enqueue task 1 (hangs and gets killed) and task 2 (healthy)
+    // Submit both tasks before the watchdog terminates the first worker.
     const p1 = pyTool.execute({ code: 'while True: pass' }, execContext);
     const p2 = pyTool.execute({ code: '"recovered second task"' }, execContext);
 
     const [out1, out2] = await Promise.all([p1, p2]);
 
-    assert.ok(out1.includes('Execution timed out'));
+    assert.match(out1, /Execution timed out after 250ms/);
+    assert.match(out1, /terminated and will be restarted cleanly/);
     assert.equal(out2.trim(), '=> \'recovered second task\'');
+    assert.equal(runner.launchCount, 2);
   });
 
   test('anti-dumping guard truncates oversized output payloads', async () => {
@@ -269,18 +269,15 @@ fetched + globalThis.offset;
     const out = await pyTool.execute({ code: 'math.sqrt(16)' }, { session: mockSession });
     assert.equal(out, '=> 4.0');
 
-    // Trigger turn/start event for another session
     const autoSession = { id: 'sess-turn-start' };
-    const autoPyRunner = serviceInstance.pool.getPythonRunner(autoSession);
-    assert.equal(autoPyRunner.isReady, false);
-
     ctx.emit('session/event', autoSession, { type: 'turn/start', data: { turn: 1 } });
-    // Allow background prewarm to finish and verify the unified lifecycle hook
-    // starts the worker exactly once.
-    await new Promise(r => setTimeout(r, 100));
-    assert.equal(autoPyRunner.isReady, true);
-    assert.equal(autoPyRunner.launchCount, 1);
-    assert.equal(serviceInstance.pool.getNodeRunner(autoSession).launchCount, 1);
+    const runners = serviceInstance.pool.runnersBySession.get(autoSession.id);
+    assert.equal(runners?.python?.launchCount, 1);
+    assert.equal(runners?.node?.launchCount, 1);
+    // Join the start already triggered by the event, then confirm neither worker relaunched.
+    await Promise.all([runners.python.ensureStarted(), runners.node.ensureStarted()]);
+    assert.equal(runners.python.launchCount, 1);
+    assert.equal(runners.node.launchCount, 1);
   });
 
   test('formatEvalOutput produces zero-token-waste ultra compact output', () => {

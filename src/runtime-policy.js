@@ -451,8 +451,8 @@ export class RuntimePolicyManager {
   }
 
   getSummary(session, turn) {
-    const state = this.stateFor(session, turn);
-    if (!state) {
+    const state = this.sessionStates.get(session);
+    if (!state || (turn != null && state.turn !== turn)) {
       return {
         toolExecutions: 0,
         failedToolExecutions: 0,

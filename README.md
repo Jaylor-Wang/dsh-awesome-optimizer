@@ -5,20 +5,19 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-167%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-175%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 High-performance runtime policy guards, persistent Python & Node evaluation daemons, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
 
-## Highlights in v3.5.0
+## Highlights in v3.6.0
 
-- **Sandbox-authoritative file inspection**: Edit recovery and batch preflight never fall back to local disk when the host filesystem service denies, fails, or cancels a read.
-- **Byte-bounded persistent workers**: Python and Node output limits are enforced in UTF-8 bytes, and external stderr accumulation is bounded.
-- **Unified worker lifecycle**: Session disposal, restart, and plugin shutdown clean up persistent workers consistently and prevent unintended worker recreation.
-- **Concurrent session coverage**: Tests cover isolated multi-session execution, cancellation, unexpected worker termination, and disposal races.
-- **Verification**: 167 tests passed; public declaration type checking passed. No new package dependencies.
+- **Persistent evaluation**: Python and Node tools still register and prewarm by default. Their workers run with host permissions. Set `persistentEval.enabled: false` for untrusted or sandbox-only profiles.
+- **Strict batch editing**: `edit_batch` in atomic mode requires complete preflight and stops at the first execution failure. `EDIT_BATCH_PARTIAL` reports confirmed partial application. Applied edits remain on disk.
+- **Side-effect-free summaries**: Querying an untracked turn leaves the current telemetry and policy state intact.
+- **Cache reporting**: Turn totals use adapter-normalized usage, and `cacheUsageCoverage` reports field coverage per stream attempt. Cache totals are `null` when the adapter reported no value. Use HTTP diagnostics for provider-level counts and field presence.
 
 ---
 
@@ -63,7 +62,7 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
   - `getStats(session)` returns a detached per-turn snapshot, also exposed as telemetry `summary.readGuard` (`null` when disabled). `outlineCacheLookups = outlineCacheHits + outlineCacheMisses`; `outlineCacheHitRate = hits / lookups` is in [0, 1], or `null` without lookups. Only enabled caches with valid identity/version after successful preflight count as lookups. Absent, stale, or evicted entries count as misses even if the subsequent read or parse fails. Disabled, unidentified, unversioned, and standalone local backends count as `outlineCacheBypasses`; rejected preflights count as neither. Ordinary and targeted reads do not inflate the lookup denominator.
   - `outlineCacheInvalidations` counts mutation/bash/eval events that clear an existing session cache group, including in-flight inspections. No group means no invalidation; version mismatches count as misses, and disposal cleanup does not count as invalidation. Counters reset on `turn/start` while caches survive turns. These metrics describe local outline caching separately from provider input caching.
 - **`edit_batch`**:
-  Sequentially applies up to 10 targeted literal text replacements across single or multiple files in one round trip, with pre-flight same-file simulation, `atomic` abort support, and automatic line-numbered recovery hints on mismatch.
+  Sequentially applies up to 10 literal edits through the native edit pipeline. `atomic: true` requires a verifiable filesystem snapshot for every target, rejects `sandbox_permissions`, and aborts before dispatch if any preflight fails. After dispatch begins, strict mode stops at the first failure; there is no rollback or cross-file transaction. Mixed outcomes say `[PARTIAL]`; strict mode also reports the error code `EDIT_BATCH_PARTIAL`. Do not retry edits that already succeeded.
 - **Inherited Security & Sandboxing**:
   Every sub-action is dispatched through the official `ToolExecutionPipeline` (`tool/ptc-dispatch-start` / `tool/ptc-dispatch`), preserving file policy locks, mutation guards, and audit hooks.
 ### 3. Defensive Runtime Policy & Self-Healing Recovery
@@ -84,7 +83,7 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
 - **Micro-Directive Convergence (`convergence`)**:
   Appends soft guidance notices when steps approach budget intervals (default `stepInterval: 8`, max `4` per turn). Features **error-aware suppression**: automatically silences notices during debugging so trouble resolution remains uninterrupted.
 - **Objective A/B Telemetry (`telemetry`)**:
-  Collects granular operational metrics including model requests, tool calls, composite parallelism ratio (`parallelismRatio`), time-to-first-token (TTFT), token consumption, and prefix cache stability (`prefixChanges`).
+  Collects model requests, tool calls, tool calls per batch (`parallelismRatio`), TTFT, token usage, and adapter message-prefix changes (`prefixChanges`). `getSummary(session, turn)` reads the latest tracked turn without changing it; older or unknown turns return an empty summary. For cache totals and reporting coverage, see [HTTP cache diagnostics](cache-diagnostics.md).
 
 ---
 
@@ -109,7 +108,7 @@ pnpm add dsh-awesome-optimizer
 
 ### 3. Zero-Config Out of the Box
 
-All optimizations are enabled by default upon installation. **No extra lines are required in your global `cordis.patch.yml`**.
+The plugin works without extra configuration. **Persistent eval registers both tools and prewarms their workers by default.** Workers inherit the host environment and OS permissions, not the DSH filesystem or shell sandbox. The Node VM, per-session state, and watchdog are not security boundaries. Set `persistentEval.enabled: false` in any profile that serves untrusted workspaces or requires sandboxed execution. This disables both tool registration and prewarming.
 
 #### Optional Advanced Overrides / Disabling
 Only when customizing paths or disabling specific subsystems do you need to add an entry in `cordis.patch.yml`:

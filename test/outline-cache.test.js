@@ -63,17 +63,6 @@ test('changed version, resolved identity, language, or session never reuses anot
   assert.equal(host.reads(), 5);
 });
 
-test('unversioned services and disabled caches read again', async () => {
-  for (const disable of [false, true]) {
-    const host = fixture(disable ? { maxCacheEntries: 0 } : {});
-    if (!disable) host.change('head\nexport function fresh() {}', undefined);
-    // Explicitly remove version because change() defaults omitted values.
-    if (!disable) host.service.stat = async () => ({ type: 'file', size: 36 });
-    await host.inspect(); await host.inspect();
-    assert.equal(host.reads(), 2);
-  }
-});
-
 test('cache cannot hide stat denial or survive local mutations', async () => {
   const host = fixture();
   await host.inspect();

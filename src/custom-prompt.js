@@ -74,7 +74,7 @@ export function formatEnvironmentFacts(processRef = process, pythonDetector = de
   }
   lines.push(
     '- Zero startup probing: workspace context and host facts are already hydrated. NEVER run exploratory probing (pwd, ls, node -v, which).',
-    '- Persistent evaluation: `eval_python` and `eval_node` maintain stateful in-memory kernels across turns; the session working directory is synchronized before execution and exposed as CWD. Python pre-imports math, re, json, time, collections, itertools, pathlib, difflib, csv; use for calculations, data filtering, and read-only project analysis with compact summaries, subject to file access rules.',
+    '- Persistent evaluation (when available; trusted local use only): `eval_python` and `eval_node` retain state across turns; the session working directory is synchronized before execution and exposed as CWD. Python pre-imports math, re, json, time, collections, itertools, pathlib, difflib, csv. These local workers do not provide DSH sandbox isolation.',
     '- Ad-hoc scripts & cleanup: MUST write ad-hoc Node/Python scripts to disk via native write first and execute by file path; remove temporary artifacts directly via bash (rm -rf).'
   );
   if (Array.isArray(options?.extraFacts)) {

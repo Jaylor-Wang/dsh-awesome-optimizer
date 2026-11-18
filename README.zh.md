@@ -5,20 +5,19 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-167%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-175%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、持久化 Python/Node 执行内核、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
 
-## v3.5.0 Worker 字节限制与生命周期加固
+## v3.6.0 批量编辑与轮次遥测改进
 
-- **文件服务遵循沙箱权限**：Edit recovery 与批量编辑预检在宿主文件服务拒绝、读取失败或取消时，不会回退到本地磁盘。
-- **Worker 输出按字节限制**：Python 与 Node 的输出上限按 UTF-8 字节执行；外部 stderr 累积也有明确内存上限。
-- **统一 Worker 生命周期**：session disposal、显式 session 重启及插件关闭时一致清理持久 Worker，并防止意外重建。
-- **并发与异常场景覆盖**：测试涵盖多 session 隔离并发、取消、Worker 意外退出和 disposal 竞态。
-- **验证**：167 项测试通过，公开声明类型检查通过，无新增包依赖。
+- Python 和 Node 持久化求值仍默认注册并预热，Worker 以宿主权限运行。在不受信任或仅允许沙箱执行的环境中，设置 `persistentEval.enabled: false`。
+- `edit_batch` 的原子模式要求完整预检，并在首次执行失败时停止。`EDIT_BATCH_PARTIAL` 表示已确认有部分编辑生效，已写入的修改会保留。
+- 查询未跟踪的轮次时，当前遥测与策略状态会保留。
+- 轮次缓存总量使用适配器归一化后的用量，`cacheUsageCoverage` 统计各字段在流式尝试中的覆盖情况。适配器未报告的缓存总量为 `null`。HTTP 诊断保留供应商原始计数及字段是否存在。
 
 ---
 
@@ -63,8 +62,8 @@
   - `getStats(session)` 返回独立的每轮统计快照，统一 telemetry 的 `summary.readGuard` 同步提供，禁用 readGuard 时为 `null`。`outlineCacheLookups = outlineCacheHits + outlineCacheMisses`，`outlineCacheHitRate = hits / lookups`（0–1，无查询时为 `null`）。只有预检成功、缓存启用且文件身份/版本有效才计入查询；不存在、过期、被淘汰的条目均算 miss，后续读取或解析失败仍保留 miss。禁用、无身份/版本或本地独立后端计为 `outlineCacheBypasses`，预检拒绝不计查询或 bypass；普通/定向 read 不进入大纲查询分母。
   - `outlineCacheInvalidations` 统计清除已有会话缓存组（包括进行中的检查）的写入/编辑/bash/eval 事件次数；无缓存组时不计，版本不匹配计 miss，释放清理不计失效。统计在 `turn/start` 重置，缓存可跨轮复用。这些指标只描述本地大纲缓存，与模型输入缓存命中率分别计算。
 - **`edit_batch`**：
-  支持单次顺序执行最多 10 处跨单个或多个文件的字面量精准文本替换，内置同文件内存预演校验、`atomic` 原子中止及匹配失败行号自愈提示。
-- **原生沙箱与安全事务继承**：
+  通过原生编辑管线顺序执行最多 10 处字面量替换。`atomic: true` 要求每个目标的快照可验证，不接受 `sandbox_permissions`；预检有任何失败均不下发编辑。开始执行后，严格模式遇到首个失败即停止，但不会回滚已应用的编辑，也不是跨文件事务。混合结果标记 `[PARTIAL]`，严格模式还会返回 `EDIT_BATCH_PARTIAL` 错误码；不要重试已成功的编辑。
+- **继承原生沙箱与审计**：
   所有子操作均通过官方 `ToolExecutionPipeline` (`tool/ptc-dispatch-start` / `tool/ptc-dispatch`) 分发，完整保留 DSH 沙箱权限判定、文件变更审核与观察策略钩子。
 ### 3. 运行期硬防护与失败自愈机制
 
@@ -84,7 +83,7 @@
 - **轻量微指令收敛 (`convergence`)**：
   在步数达到阈值后追加精简的 `notice` 收敛引导（默认 `stepInterval: 8`，每轮上限 `4` 次），且内置**错误感知避让**：模型上一步工具调用报错时自动静默，优先保证排错连贯性。
 - **客观 A/B 效果度量 (`telemetry`)**：
-  内置细粒度性能度量，实时追踪模型请求数、工具调用数、批处理并发比率（`parallelismRatio`）、首字延迟（TTFT）、Token 消耗与前缀稳定性（`prefixChanges`），支持基线差值对比。
+  追踪模型请求、工具调用、每批工具数（`parallelismRatio`）、首字延迟、Token 用量和适配器消息前缀变化（`prefixChanges`）。`getSummary(session, turn)` 只读查询最近跟踪的回合；更早或未知的回合返回空摘要。缓存用量和统计覆盖率见 [HTTP 缓存诊断](cache-diagnostics.md)。
 
 ---
 
@@ -109,7 +108,7 @@ pnpm add dsh-awesome-optimizer
 
 ### 3. 零配置开箱即用
 
-本插件在安装后**开箱即用，默认最佳实践已全量激活**。用户的全局 `cordis.patch.yml` **无需添加任何多余配置行**。
+插件无需额外配置即可工作。**默认注册 Python 和 Node 执行工具，并预热两种内核。** 子进程继承宿主环境变量和操作系统权限，不受 DSH 文件或 Shell 沙箱约束；Node VM、会话隔离和超时机制都不是安全沙箱。处理不可信工作区或要求沙箱执行的 profile 应设置 `persistentEval.enabled: false`，同时关闭工具注册和预热。
 
 #### 高级定制 / 仅维护禁用配置（可选）
 仅在需要覆盖默认路径或禁用某项能力时，才需在 `cordis.patch.yml` 中声明：
@@ -229,8 +228,8 @@ npm run benchmark
    生命周期、工具原生并发调度（`maxParallelToolCalls`）、重试、取消与结束语义全部由官方 Loop 负责。本插件通过 Cordis 机制注入，**绝不禁用、替换或篡改** `@deepseek-ai/dsh-agent-loop`。
 2. **零模型参数篡改**：
    本插件绝不在 `agent/request` 钩子中擅自降低或修改模型名称、Provider 或推理强度（`reasoningEffort`）。
-3. **事务性与沙箱透明度**：
-   复合工具执行的所有原子子操作均在官方执行管线中逐一审计与授权，绝不绕过安全边界。
+3. **复合工具的沙箱与审计**：
+   复合工具的子操作均通过官方执行管线逐一授权与审计。
 
 ---
 

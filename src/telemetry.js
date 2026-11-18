@@ -200,7 +200,9 @@ export class AgentTelemetryManager {
       started: performance.now(),
       elapsedMs: null,
       firstTokenMs: null,
-      usage: null
+      usage: null,
+      cacheReadTokens: null,
+      cacheWriteTokens: null
     };
     state.streamAttempts.push(attempt);
 
@@ -216,6 +218,11 @@ export class AgentTelemetryManager {
           }
           if (chunk.type === 'usage') {
             attempt.usage = chunk.usage;
+            // Counts are snapshots, not deltas. An omitted field does not overwrite an observation.
+            for (const key of ['cacheReadTokens', 'cacheWriteTokens']) {
+              const count = chunk.usage?.[key];
+              if (Number.isFinite(count) && count >= 0) attempt[key] = count;
+            }
           }
           yield chunk;
         }
@@ -227,8 +234,8 @@ export class AgentTelemetryManager {
 
   getSummary(session, turn) {
     const targetSession = session ?? this.activeSession;
-    const state = targetSession ? this.stateFor(targetSession, turn) : null;
-    if (!state) {
+    const state = this.sessionStates.get(targetSession);
+    if (!state || (turn != null && state.turn !== turn)) {
       return {
         turn: turn ?? 0,
         steps: 0,
@@ -245,7 +252,8 @@ export class AgentTelemetryManager {
         wallClockMs: 0,
         modelStreamMs: 0,
         firstTokenMs: { n: 0, p50: null, p95: null },
-        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: null, cacheWriteTokens: null },
+        cacheUsageCoverage: { streamAttempts: 0, readReported: 0, writeReported: 0 },
         turnOutcome: null,
         runtimePolicy: null,
         fileMutationPolicy: null,
@@ -276,6 +284,19 @@ export class AgentTelemetryManager {
       .sort((a, b) => a - b);
 
     const sumUsage = key => state.streamAttempts.reduce((sum, item) => sum + (item.usage?.[key] ?? 0), 0);
+    const cacheUsageCoverage = { streamAttempts: state.streamAttempts.length, readReported: 0, writeReported: 0 };
+    let cacheReadTokens = 0;
+    let cacheWriteTokens = 0;
+    for (const attempt of state.streamAttempts) {
+      if (attempt.cacheReadTokens !== null) {
+        cacheUsageCoverage.readReported++;
+        cacheReadTokens += attempt.cacheReadTokens;
+      }
+      if (attempt.cacheWriteTokens !== null) {
+        cacheUsageCoverage.writeReported++;
+        cacheWriteTokens += attempt.cacheWriteTokens;
+      }
+    }
     const endMark = state.endedAt ?? performance.now();
     const wallClockMs = Math.round(Math.max(0, endMark - state.startedAt) * 100) / 100;
 
@@ -302,9 +323,10 @@ export class AgentTelemetryManager {
       usage: {
         inputTokens: sumUsage('inputTokens'),
         outputTokens: sumUsage('outputTokens'),
-        cacheReadTokens: sumUsage('cacheReadTokens'),
-        cacheWriteTokens: sumUsage('cacheWriteTokens')
+        cacheReadTokens: cacheUsageCoverage.readReported > 0 ? cacheReadTokens : null,
+        cacheWriteTokens: cacheUsageCoverage.writeReported > 0 ? cacheWriteTokens : null
       },
+      cacheUsageCoverage,
       turnOutcome: state.turnOutcome,
       runtimePolicy: this.ctx?.get?.('runtimePolicy')?.getSummary(targetSession, state.turn) ?? null,
       fileMutationPolicy: this.ctx?.get?.('fileMutationPolicy')?.getSummary(targetSession, state.turn) ?? null,

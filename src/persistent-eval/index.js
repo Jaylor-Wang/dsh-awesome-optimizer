@@ -134,7 +134,8 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
         'Variables, functions, imports, and state persist across calls within the session.',
         'Standard modules (math, re, json, time, collections, itertools, pathlib, difflib, csv) are eagerly pre-imported in scope.',
         'The session working directory is synchronized before execution and exposed as CWD.',
-        'Use for exploratory calculations, data processing, and read-only project analysis (e.g. i18n key alignment or code metrics); return compact summaries without writing temp files to disk.'
+        'Trusted local execution only: this worker inherits the host environment and OS permissions, not the DSH filesystem or shell sandbox.',
+        'Use for exploratory calculations and data processing; return compact summaries without writing temp files to disk.'
       ].join(' '),
       parameters: {
         type: 'object',
@@ -180,6 +181,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
       name: EVAL_NODE_TOOL,
       description: [
         'Execute JavaScript code inside a persistent stateful Node.js VM context.',
+        'Trusted local execution only: the VM is not a security sandbox, and its worker inherits the host environment and OS permissions, not the DSH sandbox.',
         'Top-level declarations persist across synchronous calls; when using top-level await, assign shared state to globalThis (e.g. globalThis.x = await ...) to persist across turns.',
         'The session working directory is synchronized before execution and exposed as CWD.',
         'Use for rapid expression evaluation, AST exploration, and data transformations without writing temp files to disk.'

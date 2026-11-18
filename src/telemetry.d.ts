@@ -35,11 +35,16 @@ export interface TurnTelemetrySummary {
     p95: number | null;
   };
   usage: {
+    /** Adapter-normalized uncached input, not the provider's raw prompt_tokens field. */
     inputTokens: number;
     outputTokens: number;
-    cacheReadTokens: number;
-    cacheWriteTokens: number;
+    /** Sum of reported adapter values only; null if none were reported. */
+    cacheReadTokens: number | null;
+    /** Sum of reported adapter values only; null if none were reported. */
+    cacheWriteTokens: number | null;
   };
+  /** Adapter stream coverage, not raw HTTP request coverage. Counts include explicitly reported zero. */
+  cacheUsageCoverage: { streamAttempts: number; readReported: number; writeReported: number };
   turnOutcome: string | null;
   runtimePolicy: RuntimePolicySummary | null;
   fileMutationPolicy: FileMutationPolicySummary | null;
@@ -72,6 +77,7 @@ export declare class AgentTelemetryManager {
   onSessionEvent(session: unknown, event: any): void;
   onSessionDisposed(session: unknown): void;
   wrapStream(options: any, next: () => AsyncIterable<any>): AsyncIterable<any>;
+  /** Read the latest tracked turn without changing state. A missing/mismatched turn returns an empty summary; history is not retained. */
   getSummary(session?: unknown, turn?: number): TurnTelemetrySummary;
 }
 

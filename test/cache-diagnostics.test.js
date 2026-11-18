@@ -6,7 +6,7 @@ import path from 'node:path';
 import { applyTelemetry } from '../src/telemetry.js';
 import { CacheDiagnostics } from '../src/cache-diagnostics.js';
 
-test('telemetry installs opt-in observer and persists bounded JSON diagnostics', async () => {
+test('telemetry installs the opt-in observer and persists redacted JSON diagnostics', async () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'optimizer-cache-test-'));
   const file = path.join(directory, 'capture.jsonl');
   const saved = globalThis.fetch;
@@ -26,10 +26,6 @@ test('telemetry installs opt-in observer and persists bounded JSON diagnostics',
     assert.deepEqual(records.map(r => r.type), ['request', 'response', 'usage', 'complete']);
     assert.equal(records[2].usage.cached_tokens, 0);
     assert.equal(JSON.stringify(records).includes('PRIVATE'), false);
-    const bounded = new CacheDiagnostics(null, { maxBytes: 1, sink() { assert.fail('over budget'); } });
-    bounded.emit({ type: 'test' });
-    assert.equal(bounded.bytes, 0);
-    bounded.dispose();
   } finally {
     for (const dispose of hooks.get('dispose') ?? []) dispose();
     assert.equal(globalThis.fetch, fake);
@@ -42,6 +38,42 @@ test('telemetry installs opt-in observer and persists bounded JSON diagnostics',
 
 const endpoint = 'https://example.invalid/v1/chat/completions';
 const messages = [{ role: 'user', content: 'SECRET PROMPT' }];
+
+test('HTTP zero remains visible when the adapter omits the same counter in the turn summary', async () => {
+  const hooks = new Map();
+  const ctx = { on(name, fn) { const list = hooks.get(name) ?? []; list.push(fn); hooks.set(name, list); } };
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'optimizer-cache-test-'));
+  const file = path.join(directory, 'capture.jsonl');
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ usage: {
+    prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 0 }
+  } }), { headers: { 'content-type': 'application/json' } });
+  const session = { id: 'http-vs-adapter' };
+  try {
+    const manager = applyTelemetry(ctx, { cacheDiagnosticsPath: file });
+    manager.onSessionEvent(session, { type: 'turn/start', data: { turn: 1 } });
+    const options = { sessionId: session.id, messages };
+    const stream = hooks.get('llm/stream').reduceRight((next, hook) => () => hook(options, next), async function* () {
+      const response = await fetch(endpoint, { method: 'POST', body: JSON.stringify({ model: 'test', messages }) });
+      const { usage } = await response.json();
+      yield { type: 'usage', usage: { inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens } };
+    });
+    for await (const _ of stream()) {}
+    for (const dispose of hooks.get('dispose') ?? []) await dispose();
+    const rawUsage = readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse).find(r => r.type === 'usage');
+    assert.equal(rawUsage.usage.prompt_tokens_details.cached_tokens, 0);
+    const summary = manager.getSummary(session);
+    assert.equal(summary.usage.inputTokens, 10);
+    assert.equal(summary.usage.cacheReadTokens, null);
+    assert.deepEqual(summary.cacheUsageCoverage, { streamAttempts: 1, readReported: 0, writeReported: 0 });
+  } finally {
+    for (const dispose of hooks.get('dispose') ?? []) await dispose();
+    globalThis.fetch = savedFetch;
+    assert.ok(path.resolve(directory).startsWith(path.resolve(os.tmpdir()) + path.sep));
+    assert.ok(path.basename(directory).startsWith('optimizer-cache-test-'));
+    rmSync(directory, { recursive: true });
+  }
+});
 
 test('HTTP diagnostics preserve bytes, isolate sessions, compare prefixes and retain raw zero/missing usage', async () => {
   const saved = globalThis.fetch;

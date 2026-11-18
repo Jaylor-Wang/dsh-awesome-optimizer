@@ -212,8 +212,8 @@ export class FileMutationPolicyManager {
   }
 
   getSummary(session, turn) {
-    const state = this.stateFor(session, turn);
-    if (!state) {
+    const state = this.sessionStates.get(session);
+    if (!state || (turn != null && state.turn !== turn)) {
       return {
         largeWriteViolations: 0,
         largeWritesBlocked: 0,

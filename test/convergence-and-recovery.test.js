@@ -209,6 +209,7 @@ test('fileMutationPolicy blocks large full-file overwrites via ctx.fs backend ch
 test('failureRecovery preserves pending retry_failed_write across non-mutating eval_python calls', async () => {
   const largeText = 'M'.repeat(9000);
   const host = await createTestRuntime({
+    optimizerConfig: { persistentEval: { enabled: true } },
     script: [
       [call('w-fail', 'write', {
         file_path: 'computed.txt',

@@ -34,6 +34,9 @@
           maxFiles: 5
           maxWindows: 10
           maxBatchEdits: 10
+        # Local workers inherit host privileges; disable for untrusted or sandbox-only profiles.
+        persistentEval:
+          enabled: true
         convergence:
           enabled: true
           injectGuidance: true

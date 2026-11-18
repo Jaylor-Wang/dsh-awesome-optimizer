@@ -145,7 +145,7 @@ function countOccurrences(haystack, needle) {
   return count;
 }
 
-async function readFileForPreflight(filePath, cwd, fsService, signal) {
+async function readFileForPreflight(filePath, cwd, fsService, signal, resolvedTarget) {
   if (fsService) {
     // A service failure is authoritative; never bypass sandbox or cancellation through local disk.
     if (typeof fsService.readFile === 'function') {
@@ -160,9 +160,9 @@ async function readFileForPreflight(filePath, cwd, fsService, signal) {
     }
     if (typeof fsService.readText === 'function') {
       try {
-        const target = typeof fsService.resolve === 'function'
+        const target = resolvedTarget ?? (typeof fsService.resolve === 'function'
           ? await fsService.resolve(filePath, { cwd, signal })
-          : filePath;
+          : filePath);
         const content = await fsService.readText(target, signal);
         return typeof content === 'string' ? { ok: true, content } : null;
       } catch (err) {
@@ -184,17 +184,19 @@ async function readFileForPreflight(filePath, cwd, fsService, signal) {
   }
 }
 
-function simulateEditsOnContent(initialContent, items) {
-  let simulated = initialContent;
+function simulateEditsOnContent(initialContent, items, normalizeLineEndings = false) {
+  const normalize = text => normalizeLineEndings ? text.replaceAll('\r\n', '\n') : text;
+  let simulated = normalize(initialContent);
   for (const { index, item } of items) {
-    if (!item.old_string) {
+    const oldString = normalize(item.old_string);
+    if (!oldString) {
       return {
         ok: false,
         failedIndex: index,
         reason: `Pre-flight failed at edit #${index + 1} (${item.file_path}): old_string must be non-empty.`
       };
     }
-    const matches = countOccurrences(simulated, item.old_string);
+    const matches = countOccurrences(simulated, oldString);
     if (matches === 0) {
       const hint = buildEditFailureHint(simulated, item.old_string, { filePath: item.file_path });
       return {
@@ -211,9 +213,7 @@ function simulateEditsOnContent(initialContent, items) {
         reason: `Pre-flight failed at edit #${index + 1} (${item.file_path}): old_string matched ${matches} locations; set replace_all=true or provide more context.\n\n${hint}`
       };
     }
-    simulated = item.replace_all
-      ? simulated.split(item.old_string).join(item.new_string)
-      : simulated.replace(item.old_string, item.new_string);
+    simulated = simulated.split(oldString).join(normalize(item.new_string));
   }
   return { ok: true };
 }
@@ -526,7 +526,7 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
         properties: {
           atomic: {
             type: 'boolean',
-            description: `When true, pre-flight validate all edits and abort without writing if any edit fails. Defaults to ${config.atomicEdits}.`
+            description: `Require successful preflight of every edit before writing; cannot be combined with sandbox_permissions. Once execution starts, stop on the first failure without rolling back applied edits. Not a transaction. Defaults to ${config.atomicEdits}.`
           },
           edits: {
             type: 'array',
@@ -600,6 +600,8 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
         const editsByPath = new Map();
         const preflightBlockedPaths = new Map();
         const invalidEntries = new Map();
+        const targetsByPath = new Map();
+        const pathKeys = new Map();
 
         for (let index = 0; index < edits.length; index++) {
           const item = edits[index];
@@ -611,9 +613,40 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
             invalidEntries.set(index, 'Invalid edit entry: old_string must be non-empty and differ from new_string.');
             continue;
           }
-          const pathKey = normalizePath(item.file_path, cwd) || item.file_path.trim();
+          let pathKey = normalizePath(item.file_path, cwd) || item.file_path.trim();
+          let target;
+          if (isAtomic) {
+            if (typeof item.sandbox_permissions === 'string') {
+              invalidEntries.set(index, 'Strict preflight is incompatible with sandbox_permissions. No approval was requested.');
+              continue;
+            }
+            if (typeof item.justification === 'string') {
+              invalidEntries.set(index, 'justification requires sandbox_permissions, which strict preflight does not accept.');
+              continue;
+            }
+            exec.signal.throwIfAborted();
+            if (!targetsByPath.has(item.file_path)) {
+              try {
+                target = await fsService?.resolve?.(item.file_path, { cwd, signal: exec.signal });
+              } catch (error) {
+                exec.signal.throwIfAborted();
+                if (error?.code === 'ENOENT' || error?.code === 'FS_NOT_FOUND') {
+                  invalidEntries.set(index, 'Pre-flight failed: target file does not exist.');
+                  continue;
+                }
+              }
+              targetsByPath.set(item.file_path, target);
+            }
+            target = targetsByPath.get(item.file_path);
+            if (typeof target?.targetKey !== 'string' || !target.targetKey) {
+              invalidEntries.set(index, 'Pre-flight could not verify the target identity through the native filesystem service.');
+              continue;
+            }
+            pathKey = target.targetKey;
+          }
+          pathKeys.set(index, pathKey);
           if (!editsByPath.has(pathKey)) editsByPath.set(pathKey, []);
-          editsByPath.get(pathKey).push({ index, item });
+          editsByPath.get(pathKey).push({ index, item, target });
         }
 
         for (const [pathKey, group] of editsByPath.entries()) {
@@ -621,20 +654,30 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
           if (!shouldPreflight) continue;
           if (group.some(({ item }) => typeof item.sandbox_permissions === 'string')) continue;
 
-          const probe = await readFileForPreflight(group[0].item.file_path, cwd, fsService, exec.signal);
-          if (!probe) continue;
-          if (!probe.ok && probe.missing) {
-            preflightBlockedPaths.set(
-              pathKey,
-              `Pre-flight failed (${group[0].item.file_path}): target file does not exist (no changes written).`
-            );
-            continue;
-          }
-          if (probe.ok) {
-            const sim = simulateEditsOnContent(probe.content, group);
-            if (!sim.ok) {
-              preflightBlockedPaths.set(pathKey, sim.reason);
+          // Resolve aliases to one simulation, but require each distinct path to be readable.
+          const inputs = isAtomic
+            ? new Map(group.map(entry => [entry.item.file_path, entry.target]))
+            : new Map([[group[0].item.file_path, undefined]]);
+          let content;
+          for (const [filePath, target] of inputs) {
+            exec.signal.throwIfAborted();
+            const probe = await readFileForPreflight(filePath, cwd, fsService, exec.signal, target);
+            exec.signal.throwIfAborted();
+            if (probe?.missing) {
+              preflightBlockedPaths.set(pathKey, `Pre-flight failed (${filePath}): target file does not exist (no changes written).`);
+              break;
             }
+            if (!probe?.ok || (content !== undefined && probe.content !== content)) {
+              if (isAtomic) {
+                preflightBlockedPaths.set(pathKey, `Pre-flight could not verify a readable, consistent snapshot for ${filePath} (no edits dispatched).`);
+              }
+              break;
+            }
+            content = probe.content;
+          }
+          if (content !== undefined && !preflightBlockedPaths.has(pathKey)) {
+            const sim = simulateEditsOnContent(content, group, isAtomic);
+            if (!sim.ok) preflightBlockedPaths.set(pathKey, sim.reason);
           }
         }
 
@@ -653,12 +696,23 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
           );
         }
 
-        const failedPaths = new Set(preflightBlockedPaths.keys());
+        const failedPaths = new Set();
         const subResults = [];
+        let stoppedAt = null;
+        let applied = 0;
 
         for (let index = 0; index < edits.length; index++) {
-          exec.signal.throwIfAborted();
           const item = edits[index];
+          if (exec.signal.aborted) {
+            if (applied === 0) exec.signal.throwIfAborted();
+            if (state) state.editsFailed++;
+            subResults.push({
+              filePath: item?.file_path ?? `<invalid-${index}>`,
+              isError: true,
+              text: `[ERROR] Skipped edit #${index + 1}: batch cancelled.`
+            });
+            continue;
+          }
           if (invalidEntries.has(index)) {
             if (state) state.editsFailed++;
             subResults.push({
@@ -669,7 +723,16 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
             continue;
           }
 
-          const pathKey = normalizePath(item.file_path, cwd) || item.file_path.trim();
+          if (stoppedAt !== null) {
+            if (state) state.editsFailed++;
+            subResults.push({
+              filePath: item.file_path,
+              isError: true,
+              text: `[ERROR] Skipped edit #${index + 1}: strict batch stopped after edit #${stoppedAt} failed.`
+            });
+            continue;
+          }
+          const pathKey = pathKeys.get(index);
           if (preflightBlockedPaths.has(pathKey)) {
             if (state) state.editsFailed++;
             subResults.push({
@@ -702,6 +765,7 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
           const result = await dispatchSubCall(exec, 'edit', editArgs, `${exec.callId}:edit-batch-${index}`);
           if (result.isError) {
             if (state) state.editsFailed++;
+            if (isAtomic) stoppedAt = index + 1;
             failedPaths.add(pathKey);
             const msg = result.error?.message
               ?? result.content?.filter(b => b.type === 'text').map(b => b.text).join('\n')
@@ -712,6 +776,7 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
               text: `[ERROR] ${msg}`
             });
           } else {
+            applied++;
             if (state) state.editsSucceeded++;
             const text = (result.content ?? [])
               .filter(block => block.type === 'text')
@@ -725,13 +790,17 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
           }
         }
 
-        const allFailed = subResults.every(entry => entry.isError);
+        const notApplied = edits.length - applied;
         const rendered = subResults
           .map(entry => `=== [${entry.isError ? 'ERROR' : 'EDIT'}] ${entry.filePath} ===\n${entry.text}`)
           .join('\n\n');
 
-        if (allFailed) {
-          throw new HarnessError(rendered, 'EDIT_BATCH_ALL_FAILED');
+        if (applied === 0) throw new HarnessError(rendered, 'EDIT_BATCH_ALL_FAILED');
+        if (notApplied > 0) {
+          const message = `[PARTIAL] edit_batch: ${applied}/${edits.length} edits succeeded; ${notApplied} failed or were skipped. Applied edits were not rolled back. Do not retry the entire batch.\n\n${rendered}`;
+          // Preserve best-effort success semantics; strict batches signal failure to the caller.
+          if (isAtomic || exec.signal.aborted) throw new HarnessError(message, 'EDIT_BATCH_PARTIAL');
+          return message;
         }
         return rendered;
       }

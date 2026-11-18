@@ -56,7 +56,8 @@ test('customPrompt loads global and workspace SYSTEM.md and injects into system 
     // Verify system prompt in the request
     const systemPromptText = extractPromptText(host.requests[0]);
 
-    // Must contain both global and workspace instructions
+    // Suffix retains the host persona alongside both custom prompts.
+    assert.match(systemPromptText, /Complete the task accurately\./);
     assert.match(systemPromptText, /Global Developer Instructions/);
     assert.match(systemPromptText, /Always follow clean code/);
     assert.match(systemPromptText, /Repository Instructions/);
@@ -101,37 +102,6 @@ test('customPrompt supports workspace-override merge strategy', async () => {
     // Workspace override must be present, global should be skipped
     assert.match(systemPromptText, /WORKSPACE_OVERRIDE_PROMPT/);
     assert.doesNotMatch(systemPromptText, /GLOBAL_PROMPT_CONTENT/);
-  } finally {
-    await host.dispose();
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('customPrompt supports replace-all placement mode to prune official verbose sections', async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-custom-replace-all-test-'));
-  const globalFile = path.join(tempDir, 'SYSTEM.md');
-  fs.writeFileSync(globalFile, 'STANDALONE_REFINED_PROMPT', 'utf8');
-
-  const host = await createTestRuntime({
-    optimizerConfig: {
-      customPrompt: {
-        enabled: true,
-        globalFile,
-        placement: 'replace-all',
-        hotReload: false
-      }
-    },
-    script: [
-      [{ type: 'text', text: 'Done.' }]
-    ]
-  });
-
-  try {
-    await host.run('Check replace-all');
-    const systemPromptText = extractPromptText(host.requests[0]);
-
-    assert.match(systemPromptText, /STANDALONE_REFINED_PROMPT/);
-    assert.doesNotMatch(systemPromptText, /Default Persona/);
   } finally {
     await host.dispose();
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -238,6 +208,8 @@ test('detectPythonEnv safely detects and caches python or handles missing runtim
   assert.match(factsWithPy, /remove temporary artifacts directly via bash \(rm -rf\)/);
   assert.match(factsWithPy, /session working directory is synchronized before execution and exposed as CWD/);
   assert.match(factsWithPy, /pathlib, difflib, csv/);
+  assert.match(factsWithPy, /when available; trusted local use only/);
+  assert.match(factsWithPy, /do not provide DSH sandbox isolation/);
 
   // 2. Mock missing python
   resetPythonCacheForTesting();
@@ -295,6 +267,7 @@ test('customPrompt replace-all strips all non-optimizer sections and honors incl
     const promptText = extractPromptText(host.requests[0]);
     assert.match(promptText, /CUSTOM_CORE_PROMPT/);
     assert.match(promptText, /Work toward the user's completion criteria/);
+    assert.doesNotMatch(promptText, /Complete the task accurately\./);
     assert.doesNotMatch(promptText, /STRIPPED_SKILL_CATALOG/);
     assert.doesNotMatch(promptText, /STRIPPED_MCP_SECTION/);
     assert.doesNotMatch(promptText, /STRIPPED_TOOL_SECTION/);

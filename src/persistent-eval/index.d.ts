@@ -5,6 +5,7 @@ export const EVAL_PYTHON_TOOL: 'eval_python';
 export const EVAL_NODE_TOOL: 'eval_node';
 
 export interface PersistentEvalOptions {
+  /** Default: true. Set false to disable local workers that run outside the DSH sandbox. */
   enabled?: boolean;
   python?: boolean;
   node?: boolean;

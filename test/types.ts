@@ -86,8 +86,12 @@ const subConfigs: [
       summary.readGuard.outlineCacheMisses, summary.readGuard.outlineCacheBypasses,
       summary.readGuard.outlineCacheInvalidations
     ];
+    const cacheRead: number | null = summary.usage.cacheReadTokens;
+    const coverage: number = summary.cacheUsageCoverage.readReported;
     void rate;
     void counts;
+    void cacheRead;
+    void coverage;
   } }
 ];
 
