@@ -139,6 +139,7 @@ for (const kernel of kernels) {
     assert.equal(runner.launchCount, launches + 1);
 
     ctx.emit('session/disposed', a);
+    ctx.emit('session/event', a, { type: 'session/start' });
     initialDirectories.set(a.id, dirs.a);
     assert.equal(await evaluate(a, { code: isAt(dirs.a) }), truth);
   });

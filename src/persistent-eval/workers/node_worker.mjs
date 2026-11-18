@@ -132,6 +132,37 @@ async function executeInContext(code, context) {
   return syncScript.runInContext(context, { breakOnSigint: true });
 }
 
+function byteLength(value) {
+  return Buffer.byteLength(value, 'utf8');
+}
+
+function createBoundedCapture(maxBytes, label) {
+  const suffix = `\n\n[Output truncated: ${label} exceeded ${maxBytes} bytes.]`;
+  let value = '';
+  let truncated = false;
+  return {
+    write(chunk) {
+      if (truncated) return;
+      const text = typeof chunk === 'string' ? chunk : String(chunk ?? '');
+      if (byteLength(value) + byteLength(text) <= maxBytes) {
+        value += text;
+        return;
+      }
+      const effectiveSuffix = byteLength(suffix) >= maxBytes ? '\n[Output truncated]' : suffix;
+      const suffixBytes = byteLength(effectiveSuffix);
+      const available = Math.max(0, maxBytes - byteLength(value) - suffixBytes);
+      const bytes = Buffer.from(text, 'utf8');
+      let end = Math.min(available, bytes.length);
+      while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+      value += bytes.subarray(0, end).toString('utf8');
+      if (byteLength(value) + suffixBytes <= maxBytes) value += effectiveSuffix;
+      else value = Buffer.from(value, 'utf8').subarray(0, maxBytes).toString('utf8');
+      truncated = true;
+    },
+    get value() { return value; }
+  };
+}
+
 function sendFrame(payload) {
   let line;
   try {
@@ -193,23 +224,18 @@ function main() {
       return;
     }
 
-    let stdoutBuf = '';
-    let stderrBuf = '';
+    const maxOutputBytes = Number.isInteger(req.maxOutputBytes) && req.maxOutputBytes >= 0
+      ? req.maxOutputBytes
+      : 8192;
+    const stdoutCapture = createBoundedCapture(maxOutputBytes, 'stdout');
+    const stderrCapture = createBoundedCapture(maxOutputBytes, 'stderr');
 
-    // Intercept console inside context
+    // Intercept console inside context with byte-bounded UTF-8 buffers.
     const customConsole = {
-      log: (...args) => {
-        stdoutBuf += util.format(...args) + '\n';
-      },
-      info: (...args) => {
-        stdoutBuf += util.format(...args) + '\n';
-      },
-      warn: (...args) => {
-        stderrBuf += util.format(...args) + '\n';
-      },
-      error: (...args) => {
-        stderrBuf += util.format(...args) + '\n';
-      }
+      log: (...args) => stdoutCapture.write(util.format(...args) + '\n'),
+      info: (...args) => stdoutCapture.write(util.format(...args) + '\n'),
+      warn: (...args) => stderrCapture.write(util.format(...args) + '\n'),
+      error: (...args) => stderrCapture.write(util.format(...args) + '\n')
     };
     CURRENT_CONTEXT.console = customConsole;
 
@@ -236,7 +262,7 @@ function main() {
     } catch (err) {
       success = false;
       errorMsg = err instanceof Error ? err.stack || err.message : String(err);
-      stderrBuf += errorMsg + '\n';
+      stderrCapture.write(errorMsg + '\n');
     }
 
     const elapsedMs = Number((performance.now() - startTime).toFixed(3));
@@ -245,8 +271,8 @@ function main() {
     sendFrame({
       id: reqId,
       success,
-      stdout: stdoutBuf,
-      stderr: stderrBuf,
+      stdout: stdoutCapture.value,
+      stderr: stderrCapture.value,
       result: success ? result : null,
       resultRepr: success ? resultRepr : null,
       error: success ? null : errorMsg,

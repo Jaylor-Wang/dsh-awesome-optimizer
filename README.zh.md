@@ -5,21 +5,20 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-160%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-167%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、持久化 Python/Node 执行内核、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
 
-## v3.4.0 上下文增长控制与 HTTP 缓存诊断
+## v3.5.0 Worker 字节限制与生命周期加固
 
-- **可选 HTTP 缓存诊断**：为 OpenAI 兼容的 `/chat/completions` [记录请求哈希与上游原始 usage](cache-diagnostics.md)，跨轮比较消息前缀和配置。缓存字段缺失与显式零值分别保留；不记录提示词、回复、图片字节或凭据。
-- **诊断边界与故障隔离**：异步日志限制文件大小和队列容量，释放时等待写入完成，失败时仅警告一次并停止诊断。初始化失败不影响 telemetry；保留响应 URL、重定向、类型及克隆元数据。
-- **准确的前缀检测**：重新计算消息摘要，识别消息替换、原地修改和跨轮变化，消除按对象身份缓存摘要造成的盲区。
-- **严格的批量编辑预检**：派发编辑前拒绝空匹配串及新旧内容相同的替换，使 atomic 预检与原生编辑校验保持一致。
-- **上下文增长控制**：将宿主 compaction 服务桥接到优化器，在每步前执行压力检查，并在确认上下文溢出后压缩并重试。该功能仅在插件层启用，不改写官方 agent loop。
-- **验证**：163 项测试通过，公开声明类型检查通过，无新增包依赖。
+- **文件服务遵循沙箱权限**：Edit recovery 与批量编辑预检在宿主文件服务拒绝、读取失败或取消时，不会回退到本地磁盘。
+- **Worker 输出按字节限制**：Python 与 Node 的输出上限按 UTF-8 字节执行；外部 stderr 累积也有明确内存上限。
+- **统一 Worker 生命周期**：session disposal、显式 session 重启及插件关闭时一致清理持久 Worker，并防止意外重建。
+- **并发与异常场景覆盖**：测试涵盖多 session 隔离并发、取消、Worker 意外退出和 disposal 竞态。
+- **验证**：167 项测试通过，公开声明类型检查通过，无新增包依赖。
 
 ---
 
@@ -28,7 +27,7 @@
 ### 1. 系统提示词精简与文件驱动热重载 (`customPrompt`)
 
 - **独立接管模式 (`placement: "replace-all"`)**：
-  在 DSH 官方 `system-prompt/assemble` 组装瀑布流中，精确剥除官方 verbose 冗余章节（包括 `harness:*`、`deployment:*`、`tool:*`、`deliverable:*`、`web:*` 等），并保留会话收敛指导等协同章节，将系统提示词基线精简至约 380 tokens 的轻量核心指令。
+  在 DSH 官方 `system-prompt/assemble` 组装瀑布流中，精确剥除官方 verbose 冗余章节（包括 `harness:*`、`deployment:*`、`tool:*`、`deliverable:*`、`web:*` 等），并保留会话收敛指导等协同章节，将系统提示词基线精简至约 380 tokens 的轻量核心指令。此模式会主动放弃这些官方 prompt sections；仍需保留的指令应自行补入 `SYSTEM.md`。
 - **双层 Markdown 规约**：
   自动寻找全局配置 `~/.dsh/SYSTEM.md`（或 `$DSH_HOME/SYSTEM.md`）与项目级工作区配置 `.dsh/SYSTEM.md`（或 `SYSTEM.md`）。权责清晰，与面向角色的 `AGENTS.md` 解耦。
 - **毫秒级防抖热重载（Hot-Reload）**：

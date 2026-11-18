@@ -79,6 +79,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
   });
 
   const workingDirectories = new Map();
+  let disposed = false;
   const sessionKey = session => session?.id || session || '__global__';
   function getWorkingDirectory(session) {
     const key = sessionKey(session);
@@ -94,28 +95,32 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
     pool.destroySession(session);
   }
   function destroy() {
+    if (disposed) return;
+    disposed = true;
     workingDirectories.clear();
     pool.destroyAll();
   }
+  function prewarmSession(session) {
+    if (disposed) return;
+    void pool.prewarm(session, { python: config.python, node: config.node });
+  }
 
-  // Clean up session workers when session ends & prewarm on session/turn starts
+  // Clean up session workers when sessions end. The official session/event stream
+  // is the single lifecycle source; avoid duplicate turn/start prewarm listeners.
   ctx.on('session/event', (session, event) => {
-    if (event?.type === 'session/destroy' || event?.type === 'session/close') {
+    if (event?.type === 'session/destroy' || event?.type === 'session/close' || event?.type === 'session/disposed') {
       destroySession(session);
+    } else if (event?.type === 'session/create' || event?.type === 'session/start') {
+      pool.reviveSession(session);
+      prewarmSession(session);
     } else if (event?.type === 'working-directory/change') {
       workingDirectories.set(sessionKey(session), event.data.cwd);
-    } else if (event?.type === 'turn/start' || event?.type === 'session/start' || event?.type === 'session/create') {
-      pool.prewarm(session, { python: config.python, node: config.node });
+    } else if (event?.type === 'turn/start') {
+      prewarmSession(session);
     }
   });
 
   ctx.on('session/disposed', destroySession);
-
-  // Pre-warm on turn/start event so worker processes are already hot during model inference
-  ctx.on('turn/start', (turn) => {
-    const session = turn?.agent?.session ?? turn?.session;
-    pool.prewarm(session, { python: config.python, node: config.node });
-  });
   // Clean up all daemon workers when plugin context is disposed
   if (typeof ctx.effect === 'function') {
     ctx.effect(() => destroy);
@@ -152,6 +157,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
       },
       isConcurrencySafe: () => false,
       async execute(args, exec) {
+        if (disposed) throw new Error('Persistent eval service has been disposed.');
         exec?.signal?.throwIfAborted();
         const session = exec?.agent?.session ?? exec?.session;
         const runner = pool.getPythonRunner(session);
@@ -199,6 +205,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
       },
       isConcurrencySafe: () => false,
       async execute(args, exec) {
+        if (disposed) throw new Error('Persistent eval service has been disposed.');
         exec?.signal?.throwIfAborted();
         const session = exec?.agent?.session ?? exec?.session;
         const runner = pool.getNodeRunner(session);
@@ -220,6 +227,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
     pool,
     config,
     prewarm(session) {
+      if (disposed) return Promise.resolve();
       return pool.prewarm(session, { python: config.python, node: config.node });
     },
     destroy

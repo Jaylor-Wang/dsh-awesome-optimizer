@@ -297,6 +297,9 @@ test('edit_batch pre-flights same-file multi-edits on disk and prevents partial 
       fs.writeFileSync(args.file_path, raw.replace(args.old_string, args.new_string), 'utf8');
       return `Edited ${args.file_path}`;
     },
+    configureTools(ctx) {
+      ctx.get('fs').readFile = async filePath => fs.readFileSync(filePath, 'utf8');
+    },
     script: [
       [call('eb-preflight', 'edit_batch', {
         edits: [
@@ -342,6 +345,9 @@ test('edit_batch atomic=true aborts entire cross-file batch on pre-flight failur
       fs.writeFileSync(args.file_path, raw.replace(args.old_string, args.new_string), 'utf8');
       return `Edited ${args.file_path}`;
     },
+    configureTools(ctx) {
+      ctx.get('fs').readFile = async filePath => fs.readFileSync(filePath, 'utf8');
+    },
     script: [
       [call('eb-atomic', 'edit_batch', {
         atomic: true,
@@ -370,16 +376,23 @@ test('edit_batch atomic=true aborts entire cross-file batch on pre-flight failur
   }
 });
 
-test('edit_batch skips subsequent same-file edits after a runtime failure when preflight cannot read file', async () => {
+test('edit_batch skips subsequent same-file edits after a sandbox-denied preflight', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-edit-denied-preflight-'));
+  const targetFile = path.join(tempDir, 'target.txt');
+  const content = 'keep me intact\nsecond line';
+  fs.writeFileSync(targetFile, content, 'utf8');
   const host = await createTestRuntime({
-    files: {
-      'virtual-only.txt': 'keep me intact\nsecond line'
+    files: { [targetFile]: content },
+    configureTools(ctx) {
+      ctx.get('fs').readFile = async () => {
+        throw Object.assign(new Error('sandbox denied preflight read'), { code: 'EACCES' });
+      };
     },
     script: [
       [call('eb-failfast', 'edit_batch', {
         edits: [
-          { file_path: 'virtual-only.txt', old_string: 'missing-first', new_string: 'nope' },
-          { file_path: 'virtual-only.txt', old_string: 'keep me intact', new_string: 'mutated' }
+          { file_path: targetFile, old_string: 'missing-first', new_string: 'nope' },
+          { file_path: targetFile, old_string: 'keep me intact', new_string: 'mutated' }
         ]
       })],
       [{ type: 'text', text: 'Fail-fast verified.' }]
@@ -388,13 +401,40 @@ test('edit_batch skips subsequent same-file edits after a runtime failure when p
 
   try {
     await host.run('Fail-fast same-file edit test');
-    assert.equal(host.virtualFs.get('virtual-only.txt'), 'keep me intact\nsecond line');
+    assert.equal(host.virtualFs.get(targetFile), content);
+    // The denied fs service must not fall back to the local target file. The first
+    // edit reaches the native pipeline and fails; the second is then skipped.
     assert.equal(host.calls.filter(c => c.name === 'edit').length, 1);
     const toolResults = host.events.filter(e => e.type === 'tool/result');
     assert.equal(toolResults[0].data.message.isError, true);
     const output = toolResults[0].data.message.content.map(b => b.text).join('\n');
     assert.match(output, /Skipped edit #2 after an earlier failure/);
+
+    const controller = new AbortController();
+    const fsService = host.ctx.get('fs');
+    fsService.readFile = async (_filePath, { signal }) => {
+      controller.abort(new Error('workspace cancellation'));
+      signal?.throwIfAborted();
+      throw new Error('workspace cancellation');
+    };
+    const editBatch = host.ctx.tools.get('edit_batch', host.agent);
+    const editCallsBeforeCancellation = host.calls.filter(call => call.name === 'edit').length;
+    await assert.rejects(editBatch.execute({
+      edits: [
+        { file_path: targetFile, old_string: 'keep me intact', new_string: 'cancelled' },
+        { file_path: targetFile, old_string: 'second line', new_string: 'also cancelled' }
+      ]
+    }, {
+      agent: host.agent,
+      callId: 'eb-cancelled',
+      rootCallId: 'eb-cancelled',
+      signal: controller.signal,
+      deferContext() {}
+    }), /abort|cancellation/i);
+    assert.equal(host.calls.filter(call => call.name === 'edit').length, editCallsBeforeCancellation);
+    assert.equal(host.virtualFs.get(targetFile), content);
   } finally {
     await host.dispose();
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });

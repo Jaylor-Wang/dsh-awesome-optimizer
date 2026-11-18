@@ -20,6 +20,8 @@ export class DaemonPool {
   constructor(config = {}) {
     this.config = config;
     this.runnersBySession = new Map();
+    this.disposedKeys = new Set();
+    this.isDestroyed = false;
   }
 
   _getKey(session) {
@@ -27,8 +29,20 @@ export class DaemonPool {
     return session.id || session;
   }
 
+  _assertSessionActive(key) {
+    if (this.isDestroyed) throw new Error('Daemon pool has been destroyed.');
+    if (this.disposedKeys.has(key)) throw new Error('Session workers have been destroyed.');
+  }
+
+  reviveSession(session) {
+    if (this.isDestroyed) return false;
+    this.disposedKeys.delete(this._getKey(session));
+    return true;
+  }
+
   getPythonRunner(session) {
     const key = this._getKey(session);
+    this._assertSessionActive(key);
     let sessionMap = this.runnersBySession.get(key);
     if (!sessionMap) {
       sessionMap = {};
@@ -50,6 +64,7 @@ export class DaemonPool {
 
   getNodeRunner(session) {
     const key = this._getKey(session);
+    this._assertSessionActive(key);
     let sessionMap = this.runnersBySession.get(key);
     if (!sessionMap) {
       sessionMap = {};
@@ -77,6 +92,8 @@ export class DaemonPool {
    * @param {boolean} [options.node=true]
    */
   async prewarm(session, { python = true, node = true } = {}) {
+    const key = this._getKey(session);
+    if (this.isDestroyed || this.disposedKeys.has(key)) return;
     const promises = [];
     if (python) {
       try {
@@ -99,6 +116,7 @@ export class DaemonPool {
 
   destroySession(session) {
     const key = this._getKey(session);
+    this.disposedKeys.add(key);
     const sessionMap = this.runnersBySession.get(key);
     if (!sessionMap) return;
 
@@ -112,9 +130,12 @@ export class DaemonPool {
   }
 
   destroyAll() {
+    if (this.isDestroyed) return;
+    this.isDestroyed = true;
     for (const [key, sessionMap] of this.runnersBySession.entries()) {
       if (sessionMap.python) sessionMap.python.destroy();
       if (sessionMap.node) sessionMap.node.destroy();
+      this.disposedKeys.add(key);
     }
     this.runnersBySession.clear();
   }

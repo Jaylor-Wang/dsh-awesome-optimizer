@@ -1,6 +1,14 @@
 import { test, describe, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyPersistentEval, EVAL_PYTHON_TOOL, EVAL_NODE_TOOL, formatEvalOutput, StdioWorkerRunner } from '../src/persistent-eval/index.js';
+import {
+  applyPersistentEval,
+  EVAL_PYTHON_TOOL,
+  EVAL_NODE_TOOL,
+  formatEvalOutput,
+  StdioWorkerRunner,
+  PY_WORKER_SCRIPT,
+  NODE_WORKER_SCRIPT
+} from '../src/persistent-eval/index.js';
 import { createTestRuntime, call } from './support/runtime.js';
 function createMockContext() {
   const registeredTools = new Map();
@@ -173,6 +181,61 @@ fetched + globalThis.offset;
     assert.ok(out.includes('[Output truncated: stdout exceeded 128 bytes.'));
   });
 
+  test('worker stdout and stderr obey true UTF-8 byte limits for Python and Node', async t => {
+    const cases = [
+      {
+        command: 'python',
+        args: ['-u', PY_WORKER_SCRIPT],
+        code: 'import sys; print("中😀" * 100); print("错误😀" * 100, file=sys.stderr)'
+      },
+      {
+        command: 'node',
+        args: [NODE_WORKER_SCRIPT],
+        code: 'console.log("中😀".repeat(100)); console.error("错误😀".repeat(100));'
+      }
+    ];
+
+    for (const item of cases) {
+      const runner = new StdioWorkerRunner({ ...item, maxOutputBytes: 64 });
+      t.after(() => runner.destroy());
+      const response = await runner.execute(item.code);
+      assert.ok(Buffer.byteLength(response.stdout, 'utf8') <= 64);
+      assert.ok(Buffer.byteLength(response.stderr, 'utf8') <= 64);
+      assert.doesNotMatch(response.stdout, /\uFFFD/);
+      assert.doesNotMatch(response.stderr, /\uFFFD/);
+      assert.match(response.stdout, /Output truncated/);
+      assert.match(response.stderr, /Output truncated/);
+    }
+  });
+
+  test('stdio runner bounds external stderr accumulation by bytes', async t => {
+    const script = [
+      "const readline = require('node:readline');",
+      "process.stdout.write(JSON.stringify({status:'ready',pid:process.pid}) + '\\n');",
+      "readline.createInterface({input:process.stdin}).on('line', line => {",
+      "const req = JSON.parse(line); process.stderr.write('中'.repeat(10000));",
+      "process.stdout.write(JSON.stringify({id:req.id,success:true,stdout:'',stderr:'',result:null}) + '\\n'); });"
+    ].join('');
+    const runner = new StdioWorkerRunner({ command: 'node', args: ['-e', script], maxOutputBytes: 64 });
+    t.after(() => runner.destroy());
+    const response = await runner.execute('ignored');
+    assert.ok(Buffer.byteLength(response.stderr, 'utf8') <= 64);
+    assert.doesNotMatch(response.stderr, /\uFFFD/);
+    assert.match(response.stderr, /Output truncated/);
+  });
+
+  test('stdio runner converts unexpected worker termination into a bounded failure and can be disposed', async t => {
+    const script = "process.stdout.write(JSON.stringify({status:'ready',pid:process.pid}) + '\\n'); setTimeout(() => process.exit(17), 30);";
+    const runner = new StdioWorkerRunner({ command: 'node', args: ['-e', script], timeoutMs: 1000 });
+    t.after(() => runner.destroy());
+    const response = await runner.execute('ignored');
+    assert.equal(response.success, false);
+    assert.match(response.error, /exited unexpectedly/);
+    assert.equal(runner.isReady, false);
+    runner.destroy();
+    assert.equal(runner.isDestroyed, true);
+  });
+
   test('formatEvalOutput handles various corner cases', () => {
     assert.equal(formatEvalOutput(null), 'No response returned from kernel.');
     assert.equal(
@@ -211,10 +274,13 @@ fetched + globalThis.offset;
     const autoPyRunner = serviceInstance.pool.getPythonRunner(autoSession);
     assert.equal(autoPyRunner.isReady, false);
 
-    ctx.emit('turn/start', { session: autoSession });
-    // Allow microtask tick
+    ctx.emit('session/event', autoSession, { type: 'turn/start', data: { turn: 1 } });
+    // Allow background prewarm to finish and verify the unified lifecycle hook
+    // starts the worker exactly once.
     await new Promise(r => setTimeout(r, 100));
     assert.equal(autoPyRunner.isReady, true);
+    assert.equal(autoPyRunner.launchCount, 1);
+    assert.equal(serviceInstance.pool.getNodeRunner(autoSession).launchCount, 1);
   });
 
   test('formatEvalOutput produces zero-token-waste ultra compact output', () => {
@@ -268,6 +334,10 @@ fetched + globalThis.offset;
 
     ctx.emit('session/disposed', session);
     assert.equal(nodeRunner.isDestroyed, true);
+    assert.throws(() => serviceInstance.pool.getNodeRunner(session), /Session workers have been destroyed/);
+
+    ctx.emit('session/event', session, { type: 'session/start' });
+    assert.doesNotThrow(() => serviceInstance.pool.getNodeRunner(session));
   });
 
   test('official dsh-agent-loop hits prewarmed session worker via exec.agent.session and isolates sessions', async () => {
@@ -321,6 +391,40 @@ fetched + globalThis.offset;
       await hostA.dispose();
       await hostB.dispose();
     }
+  });
+
+  test('multiple sessions execute concurrently with isolated workers and dispose independently', async () => {
+    const { ctx, registeredTools } = createMockContext();
+    serviceInstance = applyPersistentEval(ctx, { enabled: true, python: true, node: true });
+    const pyTool = registeredTools.get(EVAL_PYTHON_TOOL);
+    const nodeTool = registeredTools.get(EVAL_NODE_TOOL);
+    const sessionA = { id: 'sess-concurrent-A' };
+    const sessionB = { id: 'sess-concurrent-B' };
+
+    const [pythonA, pythonB, nodeA, nodeB] = await Promise.all([
+      pyTool.execute({ code: 'import time\ntime.sleep(0.08)\nsession_value = "A"\nsession_value' }, { agent: { session: sessionA } }),
+      pyTool.execute({ code: 'import time\ntime.sleep(0.08)\nsession_value = "B"\nsession_value' }, { agent: { session: sessionB } }),
+      nodeTool.execute({ code: 'await new Promise(r => setTimeout(r, 80));\nglobalThis.sessionValue = "A";\nglobalThis.sessionValue' }, { agent: { session: sessionA } }),
+      nodeTool.execute({ code: 'await new Promise(r => setTimeout(r, 80));\nglobalThis.sessionValue = "B";\nglobalThis.sessionValue' }, { agent: { session: sessionB } })
+    ]);
+
+    assert.equal(pythonA.trim(), "=> 'A'");
+    assert.equal(pythonB.trim(), "=> 'B'");
+    assert.equal(nodeA.trim(), "=> 'A'");
+    assert.equal(nodeB.trim(), "=> 'B'");
+    assert.notEqual(serviceInstance.pool.getPythonRunner(sessionA), serviceInstance.pool.getPythonRunner(sessionB));
+    assert.notEqual(serviceInstance.pool.getNodeRunner(sessionA), serviceInstance.pool.getNodeRunner(sessionB));
+
+    const runnerA = serviceInstance.pool.getPythonRunner(sessionA);
+    ctx.emit('session/event', sessionA, { type: 'session/disposed' });
+    assert.equal(runnerA.isDestroyed, true);
+    assert.equal(serviceInstance.pool.runnersBySession.has(sessionA.id), false);
+    ctx.emit('session/event', sessionA, { type: 'turn/start', data: { turn: 2 } });
+    await new Promise(r => setTimeout(r, 40));
+    assert.equal(serviceInstance.pool.runnersBySession.has(sessionA.id), false);
+
+    ctx.emit('session/disposed', sessionB);
+    assert.equal(serviceInstance.pool.runnersBySession.has(sessionB.id), false);
   });
 
   test('AbortSignal immediately cancels in-flight eval_python without waiting for watchdog timeout and recovers cleanly', async () => {

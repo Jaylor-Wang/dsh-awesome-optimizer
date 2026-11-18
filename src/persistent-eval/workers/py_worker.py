@@ -101,6 +101,45 @@ def serialize_result(result):
         # Fall back to string representation
         return result_repr, result_repr
 
+class BoundedTextCapture(io.TextIOBase):
+    """Capture UTF-8 output without retaining more than the configured byte limit."""
+    def __init__(self, max_bytes, label):
+        self.max_bytes = max(0, int(max_bytes))
+        self.label = label
+        self.value = ''
+        self.truncated = False
+
+    def write(self, text):
+        if self.truncated:
+            return len(text)
+        text = str(text)
+        candidate = self.value + text
+        if len(candidate.encode('utf-8')) <= self.max_bytes:
+            self.value = candidate
+            return len(text)
+        suffix = f"\n\n[Output truncated: {self.label} exceeded {self.max_bytes} bytes.]"
+        if len(suffix.encode('utf-8')) >= self.max_bytes:
+            suffix = "\n[Output truncated]"
+        suffix_bytes = len(suffix.encode('utf-8'))
+        available = max(0, self.max_bytes - len(self.value.encode('utf-8')) - suffix_bytes)
+        encoded = text.encode('utf-8')[:available]
+        while encoded and (encoded[-1] & 0xc0) == 0x80:
+            encoded = encoded[:-1]
+        self.value += encoded.decode('utf-8', errors='ignore')
+        if len((self.value + suffix).encode('utf-8')) <= self.max_bytes:
+            self.value += suffix
+        else:
+            encoded_value = self.value.encode('utf-8')[:self.max_bytes]
+            while encoded_value and (encoded_value[-1] & 0xc0) == 0x80:
+                encoded_value = encoded_value[:-1]
+            self.value = encoded_value.decode('utf-8', errors='ignore')
+        self.truncated = True
+        return len(text)
+
+    def getvalue(self):
+        return self.value
+
+
 def print_user_traceback(ex, stream):
     """Hide worker frames without discarding user frames or exception metadata."""
     diagnostic = traceback.TracebackException.from_exception(ex)
@@ -167,8 +206,11 @@ def main():
             REAL_STDOUT.buffer.flush()
             continue
 
-        captured_stdout = io.StringIO()
-        captured_stderr = io.StringIO()
+        max_output_bytes = req.get("maxOutputBytes", 8192)
+        if not isinstance(max_output_bytes, int) or max_output_bytes < 0:
+            max_output_bytes = 8192
+        captured_stdout = BoundedTextCapture(max_output_bytes, "stdout")
+        captured_stderr = BoundedTextCapture(max_output_bytes, "stderr")
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         sys.stdout = captured_stdout

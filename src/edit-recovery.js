@@ -386,6 +386,7 @@ async function readTargetForRecovery(filePath, cwd, fsService, signal, maxInspec
   if (!filePath || typeof filePath !== 'string') return null;
 
   if (fsService) {
+    // A service failure is authoritative; never bypass sandbox or cancellation through local disk.
     if (typeof fsService.readFile === 'function') {
       try {
         const content = await fsService.readFile(filePath, { cwd, signal, encoding: 'utf8' });
@@ -404,11 +405,13 @@ async function readTargetForRecovery(filePath, cwd, fsService, signal, maxInspec
         if (typeof content !== 'string') return null;
         return Buffer.byteLength(content, 'utf8') <= maxInspectBytes ? content : null;
       } catch {
-        // Fall through to disk
+        return null;
       }
     }
+    return null;
   }
 
+  // Standalone hosts without an fs service may use a bounded local inspection.
   try {
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
     const stat = await fs.stat(resolved);

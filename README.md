@@ -5,21 +5,20 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-160%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-167%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 High-performance runtime policy guards, persistent Python & Node evaluation daemons, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
 
-## Highlights in v3.4.0
+## Highlights in v3.5.0
 
-- **Opt-in HTTP cache diagnostics**: [Capture request hashes and upstream usage](cache-diagnostics.md) for OpenAI-compatible `/chat/completions` to compare message prefixes and configuration across turns. Missing cache counters remain distinct from explicit zero; prompts, responses, image bytes, and credentials are never logged.
-- **Bounded, isolated diagnostics**: Asynchronous logging has file and queue limits, flushes on disposal, and stops with one warning on failure. Initialization failures preserve telemetry; response URL, redirect/type metadata, and clone metadata are preserved.
-- **Accurate prefix telemetry**: Detects message replacement, in-place mutation, and changes across turns without stale object-identity digest caching.
-- **Stricter batch preflight**: Rejects empty or unchanged replacement strings before dispatching edits, keeping atomic preflight consistent with native edit validation.
-- **Context growth control**: Bridges the host compaction service into the optimizer, triggering pressure checks before steps and compact-and-retry recovery after confirmed context overflow. It is opt-in at the plugin layer and never mutates the official agent loop.
-- **Verification**: 163 tests passed; public declaration type checking passed. No new package dependencies.
+- **Sandbox-authoritative file inspection**: Edit recovery and batch preflight never fall back to local disk when the host filesystem service denies, fails, or cancels a read.
+- **Byte-bounded persistent workers**: Python and Node output limits are enforced in UTF-8 bytes, and external stderr accumulation is bounded.
+- **Unified worker lifecycle**: Session disposal, restart, and plugin shutdown clean up persistent workers consistently and prevent unintended worker recreation.
+- **Concurrent session coverage**: Tests cover isolated multi-session execution, cancellation, unexpected worker termination, and disposal races.
+- **Verification**: 167 tests passed; public declaration type checking passed. No new package dependencies.
 
 ---
 
@@ -28,7 +27,7 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
 ### 1. Refined System Prompt & File-Driven Hot-Reload (`customPrompt`)
 
 - **Standalone Mode (`placement: "replace-all"`)**:
-  Hooks into the DSH `system-prompt/assemble` waterfall to strip all official verbose sections (`harness:*`, `deployment:*`, `tool:*`, `deliverable:*`, `web:*`), preserving convergence guidance companion sections while presenting your refined `SYSTEM.md` as the standalone authority.
+  Hooks into the DSH `system-prompt/assemble` waterfall to strip all official verbose sections (`harness:*`, `deployment:*`, `tool:*`, `deliverable:*`, `web:*`), preserving convergence guidance companion sections while presenting your refined `SYSTEM.md` as the standalone authority. This intentionally abandons those official prompt sections; add any instructions you still need to `SYSTEM.md`.
 - **Dual-Layer Markdown Convention**:
   Automatically discovers global `~/.dsh/SYSTEM.md` (or `$DSH_HOME/SYSTEM.md`) and project workspace `.dsh/SYSTEM.md` (or `SYSTEM.md`), cleanly separating developer system defaults from repo-specific instructions.
 - **Millisecond Hot-Reload**:

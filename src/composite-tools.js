@@ -147,12 +147,15 @@ function countOccurrences(haystack, needle) {
 
 async function readFileForPreflight(filePath, cwd, fsService, signal) {
   if (fsService) {
+    // A service failure is authoritative; never bypass sandbox or cancellation through local disk.
     if (typeof fsService.readFile === 'function') {
       try {
-        const content = await fsService.readFile(filePath, { cwd, signal });
-        if (typeof content === 'string') return { ok: true, content };
+        const content = await fsService.readFile(filePath, { cwd, signal, encoding: 'utf8' });
+        return typeof content === 'string' ? { ok: true, content } : null;
       } catch (err) {
-        if (err?.code === 'ENOENT') return { ok: false, missing: true };
+        return err?.code === 'ENOENT' || err?.code === 'FS_NOT_FOUND'
+          ? { ok: false, missing: true }
+          : null;
       }
     }
     if (typeof fsService.readText === 'function') {
@@ -161,31 +164,23 @@ async function readFileForPreflight(filePath, cwd, fsService, signal) {
           ? await fsService.resolve(filePath, { cwd, signal })
           : filePath;
         const content = await fsService.readText(target, signal);
-        if (typeof content === 'string') return { ok: true, content };
+        return typeof content === 'string' ? { ok: true, content } : null;
       } catch (err) {
-        if (err?.code === 'ENOENT' || err?.code === 'FS_NOT_FOUND') return { ok: false, missing: true };
+        return err?.code === 'ENOENT' || err?.code === 'FS_NOT_FOUND'
+          ? { ok: false, missing: true }
+          : null;
       }
     }
+    return null;
   }
 
+  // Standalone hosts without an fs service may use local preflight inspection.
   try {
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
     const content = await fs.readFile(resolved, 'utf8');
     return { ok: true, content };
   } catch (err) {
-    if (err?.code === 'ENOENT') {
-      if (fsService && typeof fsService.resolve === 'function' && typeof fsService.stat === 'function') {
-        try {
-          const target = await fsService.resolve(filePath, { cwd, signal });
-          const stat = await fsService.stat(target, signal);
-          if (stat) return null;
-        } catch {
-          // ignore
-        }
-      }
-      return { ok: false, missing: true };
-    }
-    return null;
+    return err?.code === 'ENOENT' ? { ok: false, missing: true } : null;
   }
 }
 

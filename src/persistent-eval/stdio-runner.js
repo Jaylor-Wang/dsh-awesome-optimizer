@@ -1,6 +1,38 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import process from 'node:process';
+
+const OUTPUT_TRUNCATION_SUFFIX = '\n\n[Output truncated: output exceeded the configured byte limit.]';
+
+function byteLength(value) {
+  return Buffer.byteLength(value, 'utf8');
+}
+
+function truncateUtf8(value, maxBytes, suffix = OUTPUT_TRUNCATION_SUFFIX) {
+  const text = typeof value === 'string' ? value : String(value ?? '');
+  if (byteLength(text) <= maxBytes) return text;
+  if (maxBytes <= 0) return '';
+  let effectiveSuffix = suffix;
+  if (byteLength(effectiveSuffix) >= maxBytes) effectiveSuffix = '\n[Output truncated]';
+  const suffixBytes = byteLength(effectiveSuffix);
+  const source = Buffer.from(text, 'utf8');
+  if (suffixBytes >= maxBytes) {
+    let end = Math.min(maxBytes, source.length);
+    while (end > 0 && (source[end] & 0xc0) === 0x80) end--;
+    return source.subarray(0, end).toString('utf8');
+  }
+  const contentBytes = maxBytes - suffixBytes;
+  let end = Math.min(contentBytes, source.length);
+  while (end > 0 && (source[end] & 0xc0) === 0x80) end--;
+  return source.subarray(0, end).toString('utf8') + effectiveSuffix;
+}
+
+function appendUtf8Bounded(current, chunk, maxBytes) {
+  const text = typeof chunk === 'string' ? chunk : String(chunk ?? '');
+  const remaining = Math.max(0, maxBytes - byteLength(current));
+  if (!remaining) return current;
+  return current + truncateUtf8(text, remaining, '');
+}
 /**
  * Convert an aborted signal's reason into an Error suitable for rejection
  * and DSH cancellation classification.
@@ -123,7 +155,11 @@ export class StdioWorkerRunner {
           if (this.child !== child) return;
           // Worker-level unhandled stderr logging (not during task execution)
           if (this.currentTask) {
-            this.currentTask.stderrChunk = (this.currentTask.stderrChunk || '') + chunk.toString('utf-8');
+            const before = this.currentTask.stderrChunk || '';
+            this.currentTask.stderrChunk = appendUtf8Bounded(before, chunk, this.maxOutputBytes);
+            if (byteLength(String(chunk)) > Math.max(0, this.maxOutputBytes - byteLength(before))) {
+              this.currentTask.stderrTruncated = true;
+            }
           }
         });
 
@@ -187,19 +223,14 @@ export class StdioWorkerRunner {
   }
 
   _truncateAndResolve(task, response) {
-    let stdout = response.stdout || '';
-    let stderr = (response.stderr || '') + (task.stderrChunk || '');
-
     const limit = this.maxOutputBytes;
-    if (stdout.length > limit) {
-      stdout = stdout.slice(0, limit) + `\n\n[Output truncated: stdout exceeded ${limit} bytes. If full payload is required, write it to a file directly.]`;
-    }
-    if (stderr.length > limit) {
-      stderr = stderr.slice(0, limit) + `\n\n[Output truncated: stderr exceeded ${limit} bytes.]`;
-    }
-
-    response.stdout = stdout;
-    response.stderr = stderr;
+    response.stdout = truncateUtf8(response.stdout || '', limit,
+      `\n\n[Output truncated: stdout exceeded ${limit} bytes. If full payload is required, write it to a file directly.]`);
+    const stderrText = `${response.stderr || ''}${task.stderrChunk || ''}`;
+    const stderrSuffix = `\n\n[Output truncated: stderr exceeded ${limit} bytes.]`;
+    response.stderr = task.stderrTruncated
+      ? truncateUtf8(`${stderrText}${stderrSuffix}`, limit, stderrSuffix)
+      : truncateUtf8(stderrText, limit, stderrSuffix);
     task.resolve(response);
   }
 
@@ -342,7 +373,8 @@ export class StdioWorkerRunner {
       action: options.action || 'eval',
       cwd: options.cwd,
       code: code || '',
-      reset: Boolean(options.reset)
+      reset: Boolean(options.reset),
+      maxOutputBytes: this.maxOutputBytes
     };
 
     return new Promise((resolve, reject) => {

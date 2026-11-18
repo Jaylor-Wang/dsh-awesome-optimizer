@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { buildEditFailureHint, findBestEditMatch, isEditMatchFailure } from '../src/index.js';
+import { applyEditRecovery, buildEditFailureHint, findBestEditMatch, isEditMatchFailure } from '../src/index.js';
 import { createTestRuntime, call } from './support/runtime.js';
 
 test('editRecovery detects whitespace/indentation mismatch and enables immediate next-step edit without read', async () => {
@@ -29,6 +29,9 @@ test('editRecovery detects whitespace/indentation mismatch and enables immediate
       }
       fs.writeFileSync(args.file_path, raw.replace(args.old_string, args.new_string), 'utf8');
       return `Edited ${args.file_path}`;
+    },
+    configureTools(ctx) {
+      ctx.get('fs').readFile = async filePath => fs.readFileSync(filePath, 'utf8');
     },
     script: [
       [call('e-wrong-indent', 'edit', {
@@ -169,6 +172,46 @@ test('editRecovery never leaks file content on permission, sandbox, ENOENT, or r
     await host.dispose();
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+
+  for (const mode of ['sandbox-denial', 'cancellation']) {
+    const hooks = new Map();
+    const controller = new AbortController();
+    let readAttempts = 0;
+    const session = {};
+    const serviceError = Object.assign(new Error(mode === 'sandbox-denial' ? 'sandbox denied' : 'workspace cancellation'), {
+      code: mode === 'sandbox-denial' ? 'EACCES' : 'ABORT_ERR'
+    });
+    const ctx = {
+      on(name, callback) { hooks.set(name, callback); },
+      get(name) {
+        if (name === 'fs') {
+          return {
+            async readFile(_filePath, { signal }) {
+              readAttempts++;
+              if (mode === 'cancellation') controller.abort(serviceError);
+              signal?.throwIfAborted();
+              throw serviceError;
+            }
+          };
+        }
+        if (name === 'workingDirectory') return { get() { return ''; } };
+        return undefined;
+      }
+    };
+    applyEditRecovery(ctx);
+    const decision = await hooks.get('tools/post-execute')({
+      name: 'edit',
+      signal: controller.signal,
+      arguments: { file_path: secretFile, old_string: 'API_KEY=super-secret-token-value', new_string: 'API_KEY=none' },
+      agent: { session }
+    }, {
+      isError: true,
+      error: { message: 'old_string not found in file' }
+    }, async () => undefined);
+    assert.equal(readAttempts, 1);
+    assert.equal(decision, undefined);
+    assert.equal(controller.signal.aborted, mode === 'cancellation');
+  }
 });
 
 test('editRecovery enriches both edit_batch sub-dispatch failures and edit_batch pre-flight failures', async () => {
@@ -186,6 +229,9 @@ test('editRecovery enriches both edit_batch sub-dispatch failures and edit_batch
       }
       fs.writeFileSync(args.file_path, raw.replace(args.old_string, args.new_string), 'utf8');
       return `Edited ${args.file_path}`;
+    },
+    configureTools(ctx) {
+      ctx.get('fs').readFile = async filePath => fs.readFileSync(filePath, 'utf8');
     },
     script: [
       [call('eb-mix', 'edit_batch', {

@@ -312,8 +312,8 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
 
   const manager = new CustomPromptManager(config);
 
-  // If placement is 'suffix' or 'section', register section directly with systemPrompt service
-  if ((config.placement === 'suffix' || config.placement === 'section') && ctx.systemPrompt?.section) {
+  // For suffix placement, register the section directly with the systemPrompt service
+  if (config.placement === 'suffix' && ctx.systemPrompt?.section) {
     ctx.systemPrompt.section({
       name: config.sectionName,
       order: config.sectionOrder,
@@ -325,7 +325,7 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
     });
   }
 
-  // Also hook into waterfall 'system-prompt/assemble' for prefix or replace-persona-suffix
+  // Hook into the waterfall for both supported placement modes.
   ctx.on('system-prompt/assemble', (assembly, context) => {
     const wsRoot = resolveWorkspaceRoot(ctx, context);
     const customText = manager.getEffectivePrompt(wsRoot);
