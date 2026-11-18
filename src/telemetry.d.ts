@@ -11,6 +11,7 @@ export interface TelemetryOptions {
   trackStreams?: boolean;
   /** Opt-in HTTP diagnostics JSONL path; absolute, bounded to 8 MiB. */
   cacheDiagnosticsPath?: string;
+  /** Called at turn end. The loop does not await it, and callback failures are ignored. */
   onTurnSummary?: (summary: TurnTelemetrySummary, session: unknown) => void;
 }
 

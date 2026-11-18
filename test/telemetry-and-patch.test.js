@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { createTestRuntime, call } from './support/runtime.js';
 import { compareTurnSummaries } from '../src/index.js';
@@ -171,6 +172,31 @@ test('querying an unavailable turn leaves live telemetry and policy state untouc
     assert.equal(current.fileMutationPolicy.observedFiles, 1);
     assert.equal(current.usage.inputTokens, 137);
   } finally { await host.dispose(); }
+});
+
+test('turn end handles callback failures without waiting for async callbacks', async () => {
+  const session = {};
+  const received = [];
+  let rejectCallback;
+  const pending = new Promise((_, reject) => { rejectCallback = reject; });
+  const manager = new AgentTelemetryManager({ get: () => undefined }, {
+    onTurnSummary(summary, source) {
+      received.push([summary.turn, source]);
+      if (summary.turn === 1) throw new Error('sync observer failure');
+      return pending;
+    }
+  });
+
+  for (const turn of [1, 2]) {
+    manager.onSessionEvent(session, { type: 'turn/start', data: { turn } });
+    const result = manager.onSessionEvent(session, { type: 'turn/end', data: { turn, reason: { kind: 'completed' } } });
+    assert.equal(result, undefined);
+    assert.equal(manager.getSummary(session).turnOutcome, 'completed');
+  }
+  assert.deepEqual(received, [[1, session], [2, session]]);
+  rejectCallback(new Error('async observer failure'));
+  // node:test treats any unhandled rejection as a failure.
+  await setImmediate();
 });
 
 test('turn cache coverage counts explicit zero and excludes missing counters per stream attempt', async () => {

@@ -5,14 +5,19 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-175%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-187%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 High-performance runtime policy guards, persistent Python & Node evaluation daemons, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
 
-## Highlights in v3.6.0
+## Highlights in v3.7.0
+
+- `find_and_read` favors exact-name JavaScript and TypeScript function declarations while preserving the original plan's pattern coverage. Single-file searches compare feasible window plans, and byte-limited output prioritizes matched evidence before surrounding context.
+- Persistent evaluation bounds worker startup and cleans up cancelled startup attempts. Turn telemetry isolates asynchronous callback failures, and HTTP diagnostics apply byte limits per SSE event regardless of chunk boundaries.
+
+### v3.6.0 highlights
 
 - **Persistent evaluation**: Python and Node tools still register and prewarm by default. Their workers run with host permissions. Set `persistentEval.enabled: false` for untrusted or sandbox-only profiles.
 - **Strict batch editing**: `edit_batch` in atomic mode requires complete preflight and stops at the first execution failure. `EDIT_BATCH_PARTIAL` reports confirmed partial application. Applied edits remain on disk.

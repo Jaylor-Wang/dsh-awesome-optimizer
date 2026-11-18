@@ -75,6 +75,57 @@ test('HTTP zero remains visible when the adapter omits the same counter in the t
   }
 });
 
+test('HTTP diagnostics enforce byte limits per SSE event regardless of chunk boundaries', async () => {
+  const saved = globalThis.fetch;
+  const encoder = new TextEncoder();
+  const max = 1024 * 1024;
+  const usage = 'data: {"usage":{"prompt_tokens":17}}\r\n\r\n';
+  const event = text => `data: ${JSON.stringify({ text })}\r\n\r\n`;
+  const first = event('界'.repeat(200000));
+  const oversized = event('界'.repeat(350000));
+  const coalesced = encoder.encode(first + first + usage);
+  const splitAt = encoder.encode(first).length;
+  assert.ok(splitAt < max && coalesced.length > max);
+  const over = encoder.encode(oversized + usage);
+  assert.ok(oversized.length < max && encoder.encode(oversized).length > max);
+  const crOnly = encoder.encode(usage.replaceAll('\r\n', '\r'));
+  const endpointBody = JSON.stringify({ messages });
+  const scenarios = [
+    { bytes: coalesced, cuts: [], expected: 17 },
+    // Split inside UTF-8 and between CR and LF in the SSE separator.
+    { bytes: coalesced, cuts: [20, splitAt - 1, coalesced.length - 1], expected: 17 },
+    { bytes: over, cuts: [max - 4, max + 1], expected: null },
+    { bytes: crOnly, cuts: [crOnly.length - 1], expected: 17 }
+  ];
+  const records = [];
+  let chunks;
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    }
+  }), { headers: { 'content-type': 'text/event-stream' } });
+  const diagnostics = new CacheDiagnostics(null, { sink: record => records.push(record) });
+  try {
+    for (const { bytes, cuts, expected } of scenarios) {
+      const boundaries = [0, ...cuts, bytes.length];
+      chunks = boundaries.slice(1).map((end, index) => bytes.subarray(boundaries[index], end));
+      records.length = 0;
+      const stream = diagnostics.wrap('byte-limit', async function* () {
+        const response = await fetch(endpoint, { body: endpointBody });
+        yield new Uint8Array(await response.arrayBuffer());
+      });
+      for await (const body of stream) assert.deepEqual(body, bytes);
+      assert.equal(records.find(record => record.type === 'usage')?.usage.prompt_tokens ?? null, expected);
+      assert.equal(records.filter(record => record.type === 'capture-gap').length, Number(expected === null));
+      assert.equal(records.at(-1).captureGap, expected === null);
+    }
+  } finally {
+    await diagnostics.dispose();
+    globalThis.fetch = saved;
+  }
+});
+
 test('HTTP diagnostics preserve bytes, isolate sessions, compare prefixes and retain raw zero/missing usage', async () => {
   const saved = globalThis.fetch;
   const records = [];

@@ -5,14 +5,19 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-175%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-187%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、持久化 Python/Node 执行内核、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
 
-## v3.6.0 批量编辑与轮次遥测改进
+## v3.7.0 搜索证据与运行边界改进
+
+- `find_and_read` 优先返回与查询词同名的 JavaScript 和 TypeScript 函数声明，同时保留原读取计划覆盖的查询模式。单文件搜索会比较预算内的读取计划，输出空间不足时优先保留命中证据。
+- 持久化求值限制 Worker 启动时间并清理取消的启动尝试。轮次遥测隔离异步回调错误，HTTP 诊断按 SSE 事件限制字节数，结果不受网络分块方式影响。
+
+### v3.6.0 批量编辑与轮次遥测改进
 
 - Python 和 Node 持久化求值仍默认注册并预热，Worker 以宿主权限运行。在不受信任或仅允许沙箱执行的环境中，设置 `persistentEval.enabled: false`。
 - `edit_batch` 的原子模式要求完整预检，并在首次执行失败时停止。`EDIT_BATCH_PARTIAL` 表示已确认有部分编辑生效，已写入的修改会保留。

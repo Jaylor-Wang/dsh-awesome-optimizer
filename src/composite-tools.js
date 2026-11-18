@@ -9,7 +9,7 @@ import { truncateLongLines } from './read-guard.js';
 import { selectReadWindows } from './find-read-ranking.js';
 import {
   FindOutput, appendSearchNotices, searchStatus, splitWindows,
-  appendSlice, appendMatchListing, finishFindOutput
+  readEvidenceBytes, collectReadSlice, appendReadSlices, appendMatchListing, finishFindOutput
 } from './find-read-output.js';
 
 export const FIND_AND_READ_TOOL = 'find_and_read';
@@ -471,24 +471,34 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
         );
         const chosenTasks = selectReadWindows(candidates, { maxFiles, maxWindows, maxReadLines: config.maxReadLines });
 
-        // Complete a bounded batch before spending more of the output or I/O budget.
+        // Admit reads by their evidence cost. Context is optional and cannot consume later reads' budget.
+        const slices = [];
+        let evidenceBytes = output.remaining();
         let cursor = 0;
-        while (cursor < chosenTasks.length && output.remaining() >= 128) {
+        while (cursor < chosenTasks.length && evidenceBytes > 0) {
           exec.signal.throwIfAborted();
-          const slots = Math.min(config.readConcurrency, Math.max(1, Math.floor(output.remaining() / 1024)));
-          const batch = chosenTasks.slice(cursor, cursor + slots);
-          const previousBytes = output.bytes;
+          const batch = [];
+          while (cursor < chosenTasks.length && batch.length < config.readConcurrency) {
+            const task = chosenTasks[cursor];
+            const cost = readEvidenceBytes(task, config.maxLineChars);
+            if (cost <= evidenceBytes) {
+              batch.push({ ...task, index: cursor });
+              evidenceBytes -= cost;
+            }
+            cursor++;
+          }
+          if (!batch.length) break;
           if (state) {
             state.findReadBatches++;
             state.findWindowsRead += batch.length;
             state.findLinesRequested += batch.reduce((sum, task) => sum + task.win.end - task.win.start + 1, 0);
           }
-          const readResults = await Promise.all(batch.map(async (task, index) => {
+          const readResults = await Promise.all(batch.map(async (task) => {
             exec.signal.throwIfAborted();
             const result = await dispatchSubCall(
               exec, 'read',
               { file_path: task.file.displayPath, offset: task.win.start, limit: task.win.end - task.win.start + 1 },
-              `${exec.callId}:find-read-${cursor + index}`
+              `${exec.callId}:find-read-${task.index}`
             );
             return { ...task, result };
           }));
@@ -497,15 +507,14 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
             if (item.result.isError) {
               const message = item.result.error?.message
                 ?? (item.result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-              output.appendClipped(`=== ${item.file.displayPath}:${item.win.start}-${item.win.end} [READ ERROR] ===\n${message}`);
+              slices.push(collectReadSlice(item, '', config.maxLineChars, message));
             } else {
               const rawText = (item.result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-              appendSlice(output, item, stripReadEnvelope(rawText), config.maxLineChars);
+              slices.push(collectReadSlice(item, stripReadEnvelope(rawText), config.maxLineChars));
             }
           }
-          cursor += batch.length;
-          if (output.bytes === previousBytes) break;
         }
+        appendReadSlices(output, slices);
         return finishFindOutput(output, rankedFiles);
       }
     }, { when: ({ agent }) => ctx.tools.get('grep', agent) !== undefined });

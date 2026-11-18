@@ -10,6 +10,7 @@ export interface PersistentEvalOptions {
   python?: boolean;
   node?: boolean;
   pythonCommand?: string;
+  /** Deadline for each worker startup and execution phase. Defaults to 15,000 ms. */
   timeoutMs?: number;
   maxOutputBytes?: number;
 }
@@ -64,7 +65,7 @@ export declare class StdioWorkerRunner {
   isDestroyed: boolean;
   launchCount: number;
   constructor(options: StdioWorkerRunnerOptions);
-  ensureStarted(): Promise<void>;
+  ensureStarted(signal?: AbortSignal): Promise<void>;
   execute(code: string, options?: StdioWorkerExecuteOptions): Promise<PersistentEvalResponse>;
   destroy(): void;
 }

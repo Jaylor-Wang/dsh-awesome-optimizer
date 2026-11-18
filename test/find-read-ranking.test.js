@@ -4,7 +4,11 @@ import { selectReadWindows } from '../src/find-read-ranking.js';
 import { createTestRuntime, call } from './support/runtime.js';
 
 function file(path, rows) {
-  return { displayPath: path, linePatterns: new Map(rows.map(([line, patterns]) => [line, new Set(patterns)])) };
+  return {
+    displayPath: path,
+    linePatterns: new Map(rows.map(([line, patterns]) => [line, new Set(patterns)])),
+    lines: new Map(rows.map(([line, , text]) => [line, text ?? '']))
+  };
 }
 const task = (file, start, end, matchedLines) => ({ file, win: { start, end, matchedLines } });
 
@@ -42,6 +46,82 @@ test('final shortened window targets uncovered patterns and retains exact aggreg
   assert.deepEqual(chosen[0].win.matchedLines, [1]);
   assert.deepEqual(chosen[1].win.matchedLines, [110]);
   assert.equal(chosen.reduce((sum, item) => sum + item.win.end - item.win.start + 1, 0), 5);
+});
+
+test('a single file slot goes to the file whose feasible windows cover more patterns', async () => {
+  const contents = entries => Array.from({ length: 20 }, (_, i) => entries[i + 1] ?? '// padding').join('\n');
+  const host = await createTestRuntime({
+    files: {
+      'a.ts': contents({ 5: 'alpha beta' }),
+      'b.ts': contents({ 5: 'alpha beta', 15: 'gamma delta' })
+    },
+    script: [[call('one-file', 'find_and_read', {
+      patterns: ['alpha', 'beta', 'gamma', 'delta'], contextLines: 1, maxFiles: 1, maxWindows: 2
+    })], [{ type: 'text', text: 'Done.' }]]
+  });
+  try {
+    await host.run('Find all four markers');
+    const reads = host.calls.filter(item => item.name === 'read');
+    assert.deepEqual(reads.map(item => [item.args.file_path, item.args.offset]), [['b.ts', 4], ['b.ts', 14]]);
+    const output = host.events.find(event => event.type === 'tool/result').data.message.content[0].text;
+    assert.match(output, /^> 5: alpha beta$/m);
+    assert.match(output, /^> 15: gamma delta$/m);
+    assert.match(output, /a\.ts: L5/);
+  } finally { await host.dispose(); }
+});
+
+test('single-file lookahead respects the total line budget', () => {
+  const a = file('a.ts', [[3, ['a', 'b']]]);
+  const b = file('b.ts', [[10, ['a', 'b']], [19, ['c']]]);
+  const chosen = selectReadWindows([
+    task(a, 2, 4, [3]), task(b, 9, 11, [10]), task(b, 18, 20, [19])
+  ], { maxFiles: 1, maxWindows: 2, maxReadLines: 3 });
+  assert.deepEqual(chosen.map(item => item.file.displayPath), ['a.ts']);
+});
+
+test('single-file plans prefer declarations only after distinct pattern coverage', () => {
+  const refs = file('a.js', [[1, ['alpha'], 'alpha();'], [9, ['beta'], 'beta();']]);
+  const defs = file('b.ts', [[5, ['alpha'], 'export async function alpha() {}'], [20, ['beta'], 'export default function* beta() {}']]);
+  const candidates = [task(refs, 1, 1, [1]), task(refs, 9, 9, [9]), task(defs, 4, 6, [5]), task(defs, 19, 21, [20])];
+  const limits = { maxFiles: 1, maxWindows: 2, maxReadLines: 6 };
+  assert.deepEqual(selectReadWindows(candidates, limits).map(item => item.file.displayPath), ['b.ts', 'b.ts']);
+  assert.deepEqual(selectReadWindows(candidates, { ...limits, maxReadLines: 2 }).map(item => item.file.displayPath), ['a.js', 'a.js']);
+});
+
+test('a declaration plan can displace combined imports without losing query coverage', () => {
+  const refs = file('a.js', [[1, ['alpha', 'beta'], 'import { alpha, beta } from "./b.js";']]);
+  const defs = file('b.js', [[5, ['alpha'], 'function alpha() {}'], [20, ['beta'], 'function beta() {}']]);
+  const candidates = [task(refs, 1, 1, [1]), task(defs, 4, 6, [5]), task(defs, 19, 21, [20])];
+  const limits = { maxFiles: 2, maxWindows: 2, maxReadLines: 6 };
+  assert.deepEqual(selectReadWindows(candidates, limits).map(({ win }) => win.start), [4, 19]);
+  assert.deepEqual(selectReadWindows(candidates, { ...limits, maxWindows: 1 }).map(({ win }) => win.start), [1]);
+  const different = file('c.js', [[25, ['gamma', 'delta'], 'function gamma() { return delta; }']]);
+  assert.deepEqual(selectReadWindows([candidates[0], task(different, 24, 26, [25])], { ...limits, maxWindows: 1 })
+    .map(({ win }) => win.start), [1]);
+});
+
+test('declaration ties apply to shortened windows but never replace a new pattern', () => {
+  const source = file('a.js', [[1, ['foo', 'bar']], [8, ['foo'], 'foo();'], [9, ['foo'], 'function foo() {}'], [13, ['foo'], 'function foo() {}'], [16, ['baz'], 'baz();']]);
+  const scarce = [task(source, 1, 1, [1]), task(source, 8, 9, [8, 9])];
+  const limits = { maxFiles: 1, maxWindows: 3, maxReadLines: 2 };
+  assert.deepEqual(selectReadWindows(scarce, limits).map(({ win }) => win.matchedLines), [[1], [9]]);
+  const more = [...scarce, task(source, 13, 13, [13]), task(source, 16, 16, [16])];
+  assert.deepEqual(selectReadWindows(more, { ...limits, maxReadLines: 4 }).map(({ win }) => win.matchedLines), [[1], [16], [13]]);
+});
+
+test('generic regexes, non-source files, and non-declarations keep the normal order', () => {
+  for (const [path, pattern, declaration] of [
+    ['b.js', 'foo.*', 'function foo() {}'],
+    ['b.js', 'foo', 'function foobar() {}'],
+    ['b.js', 'foo', '// function foo() {}'],
+    ['b.js', 'foo', 'import { foo } from "./other.js";'],
+    ['b.d.mts', 'foo', 'function foo(): void;'],
+    ['b.md', 'foo', 'function foo() {}']
+  ]) {
+    const a = file('a.js', [[1, [pattern], 'foo();']]);
+    const b = file(path, [[1, [pattern], declaration]]);
+    assert.equal(selectReadWindows([task(b, 1, 1, [1]), task(a, 1, 1, [1])], { maxFiles: 1, maxWindows: 1, maxReadLines: 1 })[0].file, a);
+  }
 });
 
 test('official loop displays a later multi-pattern definition on the first read under a one-window budget', async () => {

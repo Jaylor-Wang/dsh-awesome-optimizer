@@ -1,5 +1,6 @@
 import { test, describe, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import {
   applyPersistentEval,
   EVAL_PYTHON_TOOL,
@@ -305,6 +306,62 @@ fetched + globalThis.offset;
       err => err instanceof Error && /ENOENT|spawn|exited/i.test(err.message)
     );
     brokenRunner.destroy();
+  });
+
+  test('startup timeout clears shared waiters, terminates the child, and allows the next call to restart', async t => {
+    // A Node process reading its script from stdin stays alive without sending ready.
+    const runner = new StdioWorkerRunner({ command: process.execPath, args: ['-'], timeoutMs: 120 });
+    const abort = new AbortController();
+    const cancelled = runner.execute('1 + 1', { signal: abort.signal });
+    const child = runner.child;
+    const closed = once(child, 'close');
+    t.after(async () => {
+      runner.destroy();
+      await closed;
+    });
+    const prewarm = runner.ensureStarted();
+    const execute = runner.execute('2 + 2');
+    const timedOut = /Worker startup timed out after 120ms/;
+    const checks = Promise.all([
+      assert.rejects(cancelled, { name: 'AbortError' }),
+      assert.rejects(prewarm, timedOut),
+      assert.rejects(execute, timedOut)
+    ]);
+    abort.abort();
+    assert.equal(runner.readyWaiters.length, 2);
+    assert.equal(runner.child, child);
+    assert.equal(runner.launchCount, 1);
+    await checks;
+    assert.equal(runner.child, null);
+    assert.equal(runner.startupTimer, null);
+    assert.equal(runner.readyWaiters.length, 0);
+    await closed;
+
+    runner.args = [NODE_WORKER_SCRIPT];
+    runner.timeoutMs = 2000;
+    const response = await runner.execute('3 + 4');
+    assert.equal(response.success, true);
+    assert.equal(response.result, 7);
+    assert.equal(runner.launchCount, 2);
+    assert.equal(runner.startupTimer, null);
+  });
+
+  test('cancelling the only startup waiter terminates an unready worker', async t => {
+    const runner = new StdioWorkerRunner({ command: process.execPath, args: ['-'], timeoutMs: 5000 });
+    const controller = new AbortController();
+    const started = runner.execute('1 + 1', { signal: controller.signal });
+    const closed = once(runner.child, 'close');
+    t.after(async () => {
+      runner.destroy();
+      await closed;
+    });
+
+    controller.abort();
+    await assert.rejects(started, { name: 'AbortError' });
+    assert.equal(runner.child, null);
+    assert.equal(runner.startupTimer, null);
+    assert.equal(runner.readyWaiters.length, 0);
+    await closed;
   });
 
   test('StdioWorkerRunner rejects pending startup waiters when destroyed', async () => {

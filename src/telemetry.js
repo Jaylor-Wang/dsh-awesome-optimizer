@@ -165,9 +165,11 @@ export class AgentTelemetryManager {
       state.turnOutcome = event.data?.reason?.kind ?? 'unknown';
       if (typeof this.config.onTurnSummary === 'function') {
         try {
-          this.config.onTurnSummary(this.getSummary(session, state.turn), session);
+          const result = this.config.onTurnSummary(this.getSummary(session, state.turn), session);
+          // Observe async failures without delaying the turn or changing callback ordering.
+          Promise.resolve(result).catch(() => {});
         } catch {
-          // Never allow a telemetry callback error to disrupt the agent loop.
+          // Synchronous callback failures are ignored too.
         }
       }
     }

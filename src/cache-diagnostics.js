@@ -67,10 +67,15 @@ function acquire() {
       requestId: identifier(response.headers.get('x-request-id') ?? response.headers.get('request-id')) });
     if (!response.body) return response;
     const contentType = response.headers.get('content-type') ?? '';
-    if (!contentType.includes('text/event-stream') && !contentType.includes('application/json')) return response;
+    const isSse = contentType.includes('text/event-stream');
+    if (!isSse && !contentType.includes('application/json')) return response;
     const decoder = new TextDecoder();
     let pending = '';
+    let pendingBytes = 0;
     let dropped = false;
+    let lineHasContent = false;
+    let afterCr = false;
+    let afterBlankCr = false;
     const observe = text => {
       try {
         const event = JSON.parse(text);
@@ -79,25 +84,56 @@ function acquire() {
           model: identifier(event.model), systemFingerprint: identifier(event.system_fingerprint) });
       } catch { /* Ignore non-JSON events such as [DONE]. */ }
     };
-    const inspect = (bytes, final = false) => {
+    const append = bytes => {
+      pendingBytes += bytes.byteLength;
+      if (pendingBytes <= MAX_EVENT) {
+        pending += decoder.decode(bytes, { stream: true });
+        return true;
+      }
+      dropped = true;
+      pending = '';
+      active.owner.emit({ type: 'capture-gap', request: record.request, reason: 'event-size-limit' });
+      return false;
+    };
+    const inspect = bytes => {
       if (dropped) return;
-      pending += decoder.decode(bytes, { stream: !final });
-      if (pending.length > MAX_EVENT) {
-        dropped = true;
-        pending = '';
-        active.owner.emit({ type: 'capture-gap', request: record.request, reason: 'event-size-limit' });
+      if (!isSse) {
+        append(bytes);
         return;
       }
-      if (contentType.includes('text/event-stream')) {
-        pending = pending.replace(/\r\n/g, '\n');
-        let end = pending.indexOf('\n\n');
-        while (end !== -1) {
-          const event = pending.slice(0, end);
-          pending = pending.slice(end + 2);
-          observe(event.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n'));
-          end = pending.indexOf('\n\n');
+
+      // Frame events on the wire before decoding or comparing their byte lengths.
+      // CRLF is one line ending even when it crosses a chunk boundary.
+      let start = 0;
+      for (let i = 0; i < bytes.length; i++) {
+        const byte = bytes[i];
+        const continuesCr = afterCr && byte === 10;
+        const skip = continuesCr && afterBlankCr;
+        afterCr = byte === 13;
+        afterBlankCr = false;
+        if (skip) start = i + 1;
+        if (continuesCr) continue;
+        if (byte !== 10 && byte !== 13) {
+          lineHasContent = true;
+          continue;
         }
-      } else if (final) observe(pending);
+        if (lineHasContent) {
+          lineHasContent = false;
+          continue;
+        }
+
+        if (!append(bytes.subarray(start, i))) return;
+        const event = pending + decoder.decode();
+        const data = event.split(/\r\n|\r|\n/)
+          .filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).trimStart()).join('\n');
+        if (data) observe(data);
+        pending = '';
+        pendingBytes = 0;
+        afterBlankCr = afterCr;
+        start = i + 1;
+      }
+      if (start < bytes.length) append(bytes.subarray(start));
     };
     const stream = response.body.pipeThrough(new TransformStream({
       transform(chunk, controller) {
@@ -105,7 +141,9 @@ function acquire() {
         controller.enqueue(chunk);
       },
       flush() {
-        try { inspect(undefined, true); } catch { /* Preserve stream completion. */ }
+        try {
+          if (!isSse && !dropped) observe(pending + decoder.decode());
+        } catch { /* Preserve stream completion. */ }
         active.owner.emit({ type: 'complete', request: record.request, captureGap: dropped });
       }
     }));

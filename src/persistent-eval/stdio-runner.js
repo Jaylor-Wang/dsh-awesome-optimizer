@@ -54,7 +54,7 @@ export class StdioWorkerRunner {
    * @param {object} options
    * @param {string} options.command - e.g. 'python' or 'node'
    * @param {string[]} options.args - CLI arguments
-   * @param {number} [options.timeoutMs=15000] - Hard execution timeout before killing
+   * @param {number} [options.timeoutMs=15000] - Deadline for each startup and execution phase
    * @param {number} [options.maxOutputBytes=8192] - Max stdout/stderr allowed before truncation
    * @param {object} [options.env={}] - Additional environment variables
    */
@@ -72,6 +72,7 @@ export class StdioWorkerRunner {
     this.currentTask = null;
     this.pendingQueue = [];
     this.readyWaiters = [];
+    this.startupTimer = null;
     this.launchCount = 0;
   }
 
@@ -93,92 +94,110 @@ export class StdioWorkerRunner {
     } catch {}
   }
 
-  ensureStarted() {
+  ensureStarted(signal) {
     if (this.isDestroyed) {
       return Promise.reject(new Error('Worker runner has been destroyed.'));
     }
-    if (this.child && !this.child.killed && this.isReady) {
-      return Promise.resolve();
-    }
-    if (this.child && !this.child.killed && !this.isReady) {
-      return new Promise((resolve, reject) => this.readyWaiters.push({ resolve, reject }));
-    }
-    return this._spawnProcess();
+    if (signal?.aborted) return Promise.reject(toAbortError(signal));
+    if (this.child && !this.child.killed && this.isReady) return Promise.resolve();
+
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        const index = this.readyWaiters.indexOf(waiter);
+        if (index !== -1) this.readyWaiters.splice(index, 1);
+        const error = toAbortError(signal);
+        waiter.reject(error);
+        if (this.child && !this.isReady && this.readyWaiters.length === 0) {
+          this._forceKill();
+          this._handleProcessFailure(error);
+        }
+      };
+      const cleanup = () => signal?.removeEventListener('abort', onAbort);
+      const waiter = {
+        resolve() { cleanup(); resolve(); },
+        reject(error) { cleanup(); reject(error); }
+      };
+      this.readyWaiters.push(waiter);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      // All callers share the same startup deadline and child.
+      if (!this.child) this._spawnProcess();
+    });
   }
 
   _resolveReadyWaiters() {
-    const waiters = this.readyWaiters.splice(0, this.readyWaiters.length);
-    for (const w of waiters) w.resolve();
+    clearTimeout(this.startupTimer);
+    this.startupTimer = null;
+    const waiters = this.readyWaiters.splice(0);
+    for (const waiter of waiters) waiter.resolve();
   }
 
   _rejectReadyWaiters(err) {
-    const waiters = this.readyWaiters.splice(0, this.readyWaiters.length);
-    for (const w of waiters) w.reject(err);
+    clearTimeout(this.startupTimer);
+    this.startupTimer = null;
+    const waiters = this.readyWaiters.splice(0);
+    for (const waiter of waiters) waiter.reject(err);
   }
 
   _spawnProcess() {
     this.launchCount++;
     this.isReady = false;
 
-    return new Promise((resolve, reject) => {
-      this.readyWaiters.push({ resolve, reject });
+    try {
+      const mergedEnv = {
+        ...process.env,
+        PYTHONUNBUFFERED: '1',
+        PYTHONIOENCODING: 'utf-8',
+        ...this.env
+      };
 
-      try {
-        const mergedEnv = {
-          ...process.env,
-          PYTHONUNBUFFERED: '1',
-          PYTHONIOENCODING: 'utf-8',
-          ...this.env
-        };
+      const child = spawn(this.command, this.args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: mergedEnv,
+        windowsHide: true
+      });
+      this.child = child;
+      child.on('error', err => {
+        if (this.child !== child) return;
+        this._handleProcessFailure(err);
+      });
+      child.on('exit', (code, signal) => {
+        if (this.child !== child) return;
+        this._handleProcessExit(code, signal);
+      });
+      this.startupTimer = setTimeout(() => {
+        if (this.child !== child || this.isReady) return;
+        this._forceKill(child);
+        this._handleProcessFailure(new Error(`Worker startup timed out after ${this.timeoutMs}ms.`));
+      }, this.timeoutMs);
 
-        const child = spawn(this.command, this.args, {
-          stdio: ['pipe', 'pipe', 'pipe'],
-          env: mergedEnv,
-          windowsHide: true
-        });
-        this.child = child;
+      this._ref();
 
-        this._ref();
+      const rl = readline.createInterface({
+        input: child.stdout,
+        terminal: false
+      });
+      this.rl = rl;
 
-        const rl = readline.createInterface({
-          input: child.stdout,
-          terminal: false
-        });
-        this.rl = rl;
+      rl.on('line', line => {
+        if (this.child !== child) return;
+        this._handleStdoutLine(line);
+      });
 
-        rl.on('line', line => {
-          if (this.child !== child) return;
-          this._handleStdoutLine(line);
-        });
-
-        child.stderr.on('data', chunk => {
-          if (this.child !== child) return;
-          // Worker-level unhandled stderr logging (not during task execution)
-          if (this.currentTask) {
-            const before = this.currentTask.stderrChunk || '';
-            this.currentTask.stderrChunk = appendUtf8Bounded(before, chunk, this.maxOutputBytes);
-            if (byteLength(String(chunk)) > Math.max(0, this.maxOutputBytes - byteLength(before))) {
-              this.currentTask.stderrTruncated = true;
-            }
+      child.stderr.on('data', chunk => {
+        if (this.child !== child) return;
+        // Worker-level unhandled stderr logging (not during task execution)
+        if (this.currentTask) {
+          const before = this.currentTask.stderrChunk || '';
+          this.currentTask.stderrChunk = appendUtf8Bounded(before, chunk, this.maxOutputBytes);
+          if (byteLength(String(chunk)) > Math.max(0, this.maxOutputBytes - byteLength(before))) {
+            this.currentTask.stderrTruncated = true;
           }
-        });
-
-        child.on('error', err => {
-          if (this.child !== child) return;
-          this._handleProcessFailure(err);
-        });
-
-        child.on('exit', (code, signal) => {
-          if (this.child !== child) return;
-          this._handleProcessExit(code, signal);
-        });
-      } catch (err) {
-        this.isReady = false;
-        this.child = null;
-        this.rl = null;
-        this._rejectReadyWaiters(err);
-      }
-    });
+        }
+      });
+    } catch (err) {
+      this._forceKill();
+      this._handleProcessFailure(err);
+    }
   }
 
   _handleStdoutLine(line) {
@@ -235,6 +254,7 @@ export class StdioWorkerRunner {
   }
 
   _handleProcessFailure(err) {
+    const wasReady = this.isReady;
     this.isReady = false;
     if (this.rl) {
       try { this.rl.close(); } catch {}
@@ -248,7 +268,8 @@ export class StdioWorkerRunner {
       this._cleanupTask(task);
       task.reject(err);
     }
-    this._drainQueue();
+    // A drain waiting for startup handles its own rejection and retry.
+    if (wasReady) this._drainQueue();
   }
 
   _handleProcessExit(code, signal) {
@@ -260,9 +281,9 @@ export class StdioWorkerRunner {
     }
     this.child = null;
 
-    if (!wasReady && this.readyWaiters.length > 0) {
+    if (!wasReady || this.readyWaiters.length > 0) {
       this._rejectReadyWaiters(
-        new Error(`Worker process exited before ready (code: ${code}, signal: ${signal}).`)
+        new Error(`Worker process exited while waiting for readiness (code: ${code}, signal: ${signal}).`)
       );
     }
 
@@ -283,40 +304,7 @@ export class StdioWorkerRunner {
       });
     }
 
-    this._drainQueue();
-  }
-
-  _ensureStartedWithSignal(signal) {
-    if (signal?.aborted) {
-      return Promise.reject(toAbortError(signal));
-    }
-    const startPromise = this.ensureStarted();
-    if (!signal) return startPromise;
-
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      const onAbort = () => {
-        if (settled) return;
-        settled = true;
-        signal.removeEventListener('abort', onAbort);
-        reject(toAbortError(signal));
-      };
-      signal.addEventListener('abort', onAbort, { once: true });
-      startPromise.then(
-        () => {
-          if (settled) return;
-          settled = true;
-          signal.removeEventListener('abort', onAbort);
-          resolve();
-        },
-        err => {
-          if (settled) return;
-          settled = true;
-          signal.removeEventListener('abort', onAbort);
-          reject(err);
-        }
-      );
-    });
+    if (wasReady) this._drainQueue();
   }
 
   _abortTask(task, signal) {
@@ -359,7 +347,7 @@ export class StdioWorkerRunner {
       throw toAbortError(signal);
     }
 
-    await this._ensureStartedWithSignal(signal);
+    await this.ensureStarted(signal);
     if (this.isDestroyed) {
       throw new Error('Worker runner has been destroyed.');
     }
@@ -475,7 +463,16 @@ export class StdioWorkerRunner {
     try {
       if (process.platform === 'win32' && pid) {
         // Force terminate process tree on Windows to prevent orphan python processes
-        spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
+        const killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+          windowsHide: true, stdio: 'ignore'
+        });
+        const fallback = () => {
+          if (targetChild.exitCode === null && targetChild.signalCode === null) {
+            try { targetChild.kill('SIGKILL'); } catch {}
+          }
+        };
+        killer.on('error', fallback);
+        killer.on('exit', code => { if (code !== 0) fallback(); });
       } else {
         targetChild.kill('SIGKILL');
       }

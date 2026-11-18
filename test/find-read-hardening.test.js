@@ -149,6 +149,40 @@ test('find_and_read bounds dense chained windows, aggregate read lines, and conc
   });
 });
 
+test('find_and_read preserves later pattern evidence before spending bytes on context', async () => {
+  const padding = 'p'.repeat(650);
+  const terms = ['alpha', 'beta', 'gamma'];
+  const files = Object.fromEntries(terms.map((term, index) => [
+    `${index}.ts`, [padding, padding, `const ${term} = true;`, padding, padding].join('\n')
+  ]));
+  await scenario({ files, optimizerConfig: { compositeTools: { maxTotalBytes: 4096, readConcurrency: 1 } } },
+    { patterns: terms, contextLines: 2 }, ({ output, reads }) => {
+      assert.deepEqual([...output.matchAll(/^> 3: const (\w+)/gm)].map(match => match[1]), terms);
+      assert.equal(reads.length, 3);
+      assert.ok(Buffer.byteLength(output) <= 4096);
+      assert.ok(output.includes(`  2: ${padding}`));
+      assert.match(output, /context omitted/);
+    });
+});
+
+test('exact function names prefer definitions over imports and calls within the read limit', async () => {
+  const files = {
+    'calls.js': ['import { normalizePath, truncateLongLines } from "./helpers.js";', 'normalizePath(truncateLongLines(input));'].join('\n'),
+    'helpers.js': ['// Helpers', '', 'export function normalizePath(filePath, cwd = "") {}', '', '', '', 'export function truncateLongLines(text, maxLineChars = 1500) {}', ''].join('\n')
+  };
+  const args = { patterns: ['normalizePath', 'truncateLongLines'], contextLines: 1, maxFiles: 1, maxWindows: 2 };
+  await scenario({ files }, args, ({ output, reads }) => {
+    assert.deepEqual(reads.map(({ args }) => [args.file_path, args.offset, args.limit]), [['helpers.js', 2, 7]]);
+    assert.match(output, /^> 3: export function normalizePath/m);
+    assert.match(output, /^> 7: export function truncateLongLines/m);
+    assert.match(output, /calls\.js: L1-2/);
+  });
+  await scenario({ files }, { ...args, contextLines: 0 }, ({ output, reads }) => {
+    assert.equal(reads.length, 0);
+    assert.ok(output.indexOf('=== calls.js') < output.indexOf('=== helpers.js'));
+  });
+});
+
 test('find_and_read stops scheduling further batches after output budget exhaustion', async () => {
   await scenario({
     files: Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`f${i}.ts`, `needle ${'x'.repeat(10000)}`])),
