@@ -54,6 +54,7 @@
   - `maxWindowLines: 120`：单次切片最多请求的行数，防止密集命中连锁合并为整文件读取。
   - `maxReadLines: 600`：单次调用累计请求行数上限，包含多个文件及窗口。
   - `readConcurrency: 3`：每批最多同时读取的窗口数；每批完成后重新核算输出空间，空间不足时停止后续读取。原生读取自身截断所隐藏的命中仍进入索引。
+  - `experimentalReadRanges: false`：本地宿主试点开关。宿主须显式提供 `{ version: 1 }` 的 `optimizerReadRanges` 能力，并为可执行的 `optimizer_read_ranges` 配置读取策略。该工具接收 `{ file_path, ranges: [{ offset, limit }] }`（2–8 个窗口），按入参顺序为每个窗口返回一个经策略批准的文本块。仅合并同一批中已获预算准入的窗口。能力缺失时逐窗调用原生 `read`，合批调用失败或被拒绝时直接报告。本地试点可在 DSH profile 补丁中用绝对路径加载 `scripts/local-read-ranges.mjs`，并在优化器配置中设置 `compositeTools.experimentalReadRanges: true`。适配器使用与宿主原生读取一致的上限，按工具名匹配 `read` 的策略也需覆盖 `optimizer_read_ranges`。
   - 窗口按尚未覆盖的正则数优先选择，再考虑重复模式的边际收益、行数成本及文件多样性；同分时按规范路径与行号稳定排序。`maxFiles` 限制实际选中的文件，不提前排除其他文件中的高价值窗口。
   - 以上是行数与输出字节上限，不代表底层读取字节数或 Token 的固定换算。
 - **`readGuard` 读取前检查**：

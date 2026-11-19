@@ -28,6 +28,7 @@ export const CompositeToolsConfig = z.object({
   maxWindowLines: z.number().step(1).min(1).max(1000).default(120),
   maxReadLines: z.number().step(1).min(1).max(10000).default(600),
   readConcurrency: z.number().step(1).min(1).max(8).default(3),
+  experimentalReadRanges: z.boolean().default(false),
   maxBatchEdits: z.number().step(1).min(1).max(25).default(10),
   maxLineChars: z.number().step(1).min(100).max(50000).default(1500),
   maxTotalBytes: z.number().step(1).min(512).max(1024 * 1024).default(24576),
@@ -301,6 +302,52 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
     return result;
   }
 
+  async function readBatch(exec, batch) {
+    const nativeRead = async task => {
+      exec.signal.throwIfAborted();
+      const result = await dispatchSubCall(exec, 'read', {
+        file_path: task.file.displayPath, offset: task.win.start, limit: task.win.end - task.win.start + 1
+      }, `${exec.callId}:find-read-${task.index}`);
+      const text = (result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+      return result.isError ? { error: result.error?.message ?? text } : { text: stripReadEnvelope(text) };
+    };
+    const capability = config.experimentalReadRanges && ctx.get('optimizerReadRanges');
+    if (capability?.version !== 1 || !ctx.tools.executable('read', exec.agent, exec.toolSet) ||
+        !ctx.tools.executable('optimizer_read_ranges', exec.agent, exec.toolSet)) {
+      return Promise.all(batch.map(nativeRead));
+    }
+
+    const groups = new Map();
+    for (const task of batch) {
+      const group = groups.get(task.file) ?? [];
+      group.push(task);
+      groups.set(task.file, group);
+    }
+    const byIndex = new Map();
+    await Promise.all([...groups.values()].map(async group => {
+      const first = group[0];
+      if (group.length === 1) {
+        byIndex.set(first.index, await nativeRead(first));
+        return;
+      }
+      exec.signal.throwIfAborted();
+      const result = await dispatchSubCall(exec, 'optimizer_read_ranges', {
+        file_path: first.file.displayPath,
+        ranges: group.map(({ win }) => ({ offset: win.start, limit: win.end - win.start + 1 }))
+      }, `${exec.callId}:find-ranges-${first.index}`);
+      const blocks = result.content ?? [];
+      const valid = blocks.length === group.length && blocks.every(b => b.type === 'text');
+      const error = result.isError
+        ? blocks.filter(b => b.type === 'text').map(b => b.text).join('\n') || 'Multi-window read failed.'
+        : 'Multi-window read returned no usable windows.';
+      for (const [i, task] of group.entries()) {
+        // Post-execute can replace content while leaving the original value and meta intact.
+        byIndex.set(task.index, !result.isError && valid ? { text: blocks[i].text.trimEnd() } : { error });
+      }
+    }));
+    return batch.map(task => byIndex.get(task.index));
+  }
+
   if (config.findAndRead) {
     ctx.tools.register({
       name: FIND_AND_READ_TOOL,
@@ -493,25 +540,10 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
             state.findWindowsRead += batch.length;
             state.findLinesRequested += batch.reduce((sum, task) => sum + task.win.end - task.win.start + 1, 0);
           }
-          const readResults = await Promise.all(batch.map(async (task) => {
-            exec.signal.throwIfAborted();
-            const result = await dispatchSubCall(
-              exec, 'read',
-              { file_path: task.file.displayPath, offset: task.win.start, limit: task.win.end - task.win.start + 1 },
-              `${exec.callId}:find-read-${task.index}`
-            );
-            return { ...task, result };
-          }));
+          const readResults = await readBatch(exec, batch);
           exec.signal.throwIfAborted();
-          for (const item of readResults) {
-            if (item.result.isError) {
-              const message = item.result.error?.message
-                ?? (item.result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-              slices.push(collectReadSlice(item, '', config.maxLineChars, message));
-            } else {
-              const rawText = (item.result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-              slices.push(collectReadSlice(item, stripReadEnvelope(rawText), config.maxLineChars));
-            }
+          for (const [index, item] of readResults.entries()) {
+            slices.push(collectReadSlice(batch[index], item.text ?? '', config.maxLineChars, item.error));
           }
         }
         appendReadSlices(output, slices);
