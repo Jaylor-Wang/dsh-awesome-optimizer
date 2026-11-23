@@ -15,11 +15,11 @@ export interface CompositeToolsOptions {
   maxReadLines?: number;
   /** Maximum simultaneous reads in each budget-aware batch. Default: 3. */
   readConcurrency?: number;
-  /** Group admitted windows when the host supplies optimizerReadRanges v1. Default: false. */
-  experimentalReadRanges?: boolean;
   maxBatchEdits?: number;
   maxLineChars?: number;
   maxTotalBytes?: number;
+  /** Maximum file bytes inspected during edit_batch preflight. Default: 2097152. */
+  maxPreflightBytes?: number;
   /** Require complete preflight and stop on the first execution failure. This does not roll back applied edits. */
   atomicEdits?: boolean;
 }

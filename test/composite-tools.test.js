@@ -560,3 +560,96 @@ test('edit_batch skips subsequent same-file edits after a sandbox-denied preflig
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('edit_batch preflight enforces maxPreflightBytes via stat before reading and never bypasses unavailable fs', async () => {
+  let readCalls = 0;
+  const host = await createTestRuntime({
+    files: { 'huge.ts': 'x'.repeat(8000) },
+    optimizerConfig: {
+      compositeTools: { maxPreflightBytes: 4096 }
+    },
+    configureTools(ctx) {
+      const fsService = ctx.get('fs');
+      fsService.readBytes = async () => { readCalls++; return Buffer.from('should not read'); };
+      fsService.readFile = async () => { readCalls++; return 'should not read'; };
+    },
+    script: [
+      [call('eb-oversized-atomic', 'edit_batch', {
+        atomic: true,
+        edits: [{ file_path: 'huge.ts', old_string: 'x', new_string: 'y' }]
+      })],
+      [call('eb-oversized-best-effort', 'edit_batch', {
+        atomic: false,
+        edits: [
+          { file_path: 'huge.ts', old_string: 'xxxx', new_string: 'YYYY' },
+          { file_path: 'huge.ts', old_string: 'YYYY', new_string: 'ZZZZ' }
+        ]
+      })],
+      [{ type: 'text', text: 'Oversized preflight handled.' }]
+    ]
+  });
+
+  try {
+    await host.run('Verify edit_batch stat size preflight');
+    // Neither atomic nor non-atomic preflight should read file content after stat reports size > maxPreflightBytes
+    assert.equal(readCalls, 0);
+    const results = host.events.filter(e => e.type === 'tool/result');
+    assert.equal(results.length, 2);
+    // Atomic mode aborts cleanly without dispatching edits
+    assert.equal(results[0].data.message.isError, true);
+    assert.match(results[0].data.message.content[0].text, /maxPreflightBytes/);
+    // Non-atomic mode skips preflight simulation and lets native edit proceed
+    assert.equal(results[1].data.message.isError, false);
+    assert.equal(host.calls.filter(c => c.name === 'edit').length, 2);
+  } finally {
+    await host.dispose();
+  }
+});
+
+test('edit_batch non-atomic preflight normalizes CRLF and reports multiple-matches accurately', async () => {
+  const host = await createTestRuntime({
+    files: {
+      'crlf.ts': 'const a = 1;\r\nconst b = 2;\r\nconst dup = 1;\r\nconst dup = 1;\r\n'
+    },
+    configureTools(ctx, { virtualFs }) {
+      ctx.get('fs').readFile = async filePath => virtualFs.get(filePath);
+    },
+    editHandler(args, _exec, virtualFs) {
+      const normalized = virtualFs.get(args.file_path).replaceAll('\r\n', '\n');
+      const old = args.old_string.replaceAll('\r\n', '\n');
+      if (!normalized.includes(old)) throw new Error('old_string not found');
+      virtualFs.set(args.file_path, normalized.replace(old, args.new_string).replaceAll('\n', '\r\n'));
+      return `Edited ${args.file_path}`;
+    },
+    script: [
+      // Multi-edit with LF old_string against CRLF disk content should pass non-atomic preflight
+      [call('eb-crlf-ok', 'edit_batch', {
+        edits: [
+          { file_path: 'crlf.ts', old_string: 'const a = 1;\nconst b = 2;', new_string: 'const a = 10;\nconst b = 20;' },
+          { file_path: 'crlf.ts', old_string: 'const b = 20;', new_string: 'const b = 30;' }
+        ]
+      })],
+      // Duplicate CRLF old_string should report multiple-matches hint accurately
+      [call('eb-crlf-dup', 'edit_batch', {
+        atomic: true,
+        edits: [
+          { file_path: 'crlf.ts', old_string: 'const dup = 1;\r\n', new_string: 'const dup = 2;\r\n' }
+        ]
+      })],
+      [{ type: 'text', text: 'CRLF preflight verified.' }]
+    ]
+  });
+
+  try {
+    await host.run('Verify CRLF preflight');
+    const results = host.events.filter(e => e.type === 'tool/result');
+    assert.equal(results.length, 2);
+    assert.equal(results[0].data.message.isError, false);
+    assert.match(host.virtualFs.get('crlf.ts'), /const a = 10;\r\nconst b = 30;/);
+    assert.equal(results[1].data.message.isError, true);
+    const dupText = results[1].data.message.content.map(b => b.text).join('\n');
+    assert.match(dupText, /contains 2 exact matches/);
+  } finally {
+    await host.dispose();
+  }
+});

@@ -1,7 +1,7 @@
 import z from '@deepseek-ai/schemastery';
 import { applyRuntimePolicy, RuntimePolicyConfig, RuntimePolicyManager, POLICY_SOURCE } from './runtime-policy.js';
 import { applyFileMutationPolicy, FileMutationPolicyConfig, FileMutationPolicyManager, MUTATION_SOURCE } from './file-mutation-policy.js';
-import { applyFailureRecovery, RecoveryRecord, RECOVERY_SOURCE, RETRY_TOOL, PAIRING_ERROR } from './failure-recovery.js';
+import { applyFailureRecovery, FailureRecoveryConfig, RecoveryRecord, RECOVERY_SOURCE, RETRY_TOOL, PAIRING_ERROR } from './failure-recovery.js';
 import { applyEditRecovery, EditRecoveryConfig, isEditMatchFailure, findBestEditMatch, buildEditFailureHint } from './edit-recovery.js';
 import { applyCompositeTools, CompositeToolsConfig, FIND_AND_READ_TOOL, EDIT_BATCH_TOOL, parseGrepOutput, mergeMatchWindows } from './composite-tools.js';
 import { applyReadGuard, ReadGuardConfig, READ_GUARD_SOURCE, truncateLongLines } from './read-guard.js';
@@ -12,17 +12,13 @@ import { applyCustomPrompt, CustomPromptConfig, CustomPromptManager, SECTION_NAM
 import { applyTelemetry, TelemetryConfig, AgentTelemetryManager, compareTurnSummaries } from './telemetry.js';
 import { applyContextCompaction, ContextCompactionConfig } from './context-compaction.js';
 
-import { lintPrompt, fixPrompt, lintPromptFile, RULE_IDS as PROMPT_LINT_RULES } from './prompt-linter.js';
-
 export const name = 'dsh-awesome-optimizer';
 export const inject = ['systemPrompt', 'tools'];
 
 export const Config = z.object({
   enabled: z.boolean().default(true),
   runtimePolicy: RuntimePolicyConfig.default({}),
-  policy: RuntimePolicyConfig.default({}),
   fileMutationPolicy: FileMutationPolicyConfig.default({}),
-  mutationPolicy: FileMutationPolicyConfig.default({}),
   recoverFailedWrites: z.boolean().default(true),
   editRecovery: EditRecoveryConfig.default({}),
   readGuard: ReadGuardConfig.default({}),
@@ -95,11 +91,21 @@ export function apply(ctx, raw = {}) {
 }
 
 export {
+  applyRuntimePolicy,
+  RuntimePolicyConfig,
   RuntimePolicyManager,
+  applyFileMutationPolicy,
+  FileMutationPolicyConfig,
   FileMutationPolicyManager,
+  applyFailureRecovery,
+  FailureRecoveryConfig,
   RecoveryRecord,
+  applyTelemetry,
+  TelemetryConfig,
   AgentTelemetryManager,
   compareTurnSummaries,
+  applyCompositeTools,
+  CompositeToolsConfig,
   FIND_AND_READ_TOOL,
   EDIT_BATCH_TOOL,
   parseGrepOutput,
@@ -124,6 +130,8 @@ export {
   isEditMatchFailure,
   findBestEditMatch,
   buildEditFailureHint,
+  applyConvergence,
+  ConvergenceConfig,
   CONVERGENCE_SOURCE,
   RECOVERY_SOURCE,
   POLICY_SOURCE,
@@ -134,11 +142,8 @@ export {
   detectPythonEnv,
   resetPythonCacheForTesting,
   CustomPromptManager,
+  CustomPromptConfig,
   applyCustomPrompt,
-  lintPrompt,
-  fixPrompt,
-  lintPromptFile,
-  PROMPT_LINT_RULES,
   GUIDANCE,
   REMINDER,
   applyContextCompaction,

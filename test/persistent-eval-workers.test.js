@@ -256,6 +256,24 @@ f"【{title}】动画计算完成"
       assert.equal(res.success, true);
       assert.equal(res.resultRepr, '0.3');
     });
+
+    test('should serialize NaN, Infinity, and nested non-finite floats as strict RFC 8259 JSON', async () => {
+      for (const [code, expected] of [
+        ['float("nan")', 'nan'],
+        ['float("inf")', 'inf'],
+        ['float("-inf")', '-inf'],
+        ['[1, float("nan"), {"x": float("inf")}]', "[1, nan, {'x': inf}]"]
+      ]) {
+        const res = await pyClient.send({ id: `py-nonfinite-${expected}`, code });
+        assert.equal(res.success, true);
+        assert.equal(res.result, expected);
+        assert.equal(res.resultRepr, expected);
+      }
+      // Worker remains responsive after non-finite results
+      const followUp = await pyClient.send({ id: 'py-nonfinite-followup', code: '2 + 3' });
+      assert.equal(followUp.success, true);
+      assert.equal(followUp.result, 5);
+    });
   });
 
   describe('Node.js Worker (node_worker.mjs)', () => {
@@ -393,6 +411,60 @@ let retained = 7;
       });
       assert.equal(res3.success, true);
       assert.equal(res3.result, 42);
+    });
+
+    test('should preserve full stack traces for errors thrown across VM realms', async () => {
+      const customErr = await nodeClient.send({
+        id: 'node-vm-stack-1',
+        code: 'function innerBoom() { throw new Error("vm realm boom"); }\nfunction outerBoom() { return innerBoom(); }\nouterBoom();'
+      });
+      assert.equal(customErr.success, false);
+      assert.match(customErr.error, /Error: vm realm boom/);
+      assert.match(customErr.error, /at innerBoom \(<eval_kernel>:1:/);
+      assert.match(customErr.error, /at outerBoom \(<eval_kernel>:2:/);
+      assert.match(customErr.stderr, /at innerBoom \(<eval_kernel>:1:/);
+
+      const typeErr = await nodeClient.send({
+        id: 'node-vm-stack-2',
+        code: 'const target = null;\ntarget.missingProp;'
+      });
+      assert.equal(typeErr.success, false);
+      assert.match(typeErr.error, /TypeError:/);
+      assert.match(typeErr.error, /<eval_kernel>:2:/);
+    });
+
+    test('should serialize NaN and Infinity cleanly without collapsing them to null', async () => {
+      for (const [code, expected] of [
+        ['NaN', 'NaN'],
+        ['Infinity', 'Infinity'],
+        ['-Infinity', '-Infinity']
+      ]) {
+        const res = await nodeClient.send({ id: `node-nonfinite-${expected}`, code });
+        assert.equal(res.success, true);
+        assert.equal(res.result, expected);
+        assert.equal(res.resultRepr, expected);
+      }
+    });
+
+    test('should capture trailing expression in async code even when helper functions contain return, and serialize pipelined requests', async () => {
+      const asyncHelper = await nodeClient.send({
+        id: 'node-async-return-helper',
+        code: 'function double(x) { return x * 2; }\nawait Promise.resolve(double(21))'
+      });
+      assert.equal(asyncHelper.success, true);
+      assert.equal(asyncHelper.result, 42);
+
+      // Pipelined async requests sent back-to-back must run strictly sequentially without racing stdout/console
+      const [p1, p2] = await Promise.all([
+        nodeClient.send({ id: 'pipe-1', code: 'await new Promise(r => setTimeout(r, 60));\nconsole.log("first");\n1' }),
+        nodeClient.send({ id: 'pipe-2', code: 'console.log("second");\n2' })
+      ]);
+      assert.equal(p1.id, 'pipe-1');
+      assert.equal(p1.stdout, 'first\n');
+      assert.equal(p1.result, 1);
+      assert.equal(p2.id, 'pipe-2');
+      assert.equal(p2.stdout, 'second\n');
+      assert.equal(p2.result, 2);
     });
   });
 });

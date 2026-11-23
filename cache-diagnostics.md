@@ -22,4 +22,4 @@ Interpretation:
 - Stable messages/config plus explicit zero: investigate provider routing, retention and eviction; this alone does not prove a provider defect.
 - Model/endpoint changes start a new comparison baseline.
 
-The current Web profile is linked to this checkout. Local diagnostics should be stored outside the repository, e.g. `C:/Users/29507/.dsh/diagnostics/cache-http.jsonl`. After restart, verify a request/response/usage sequence during normal usage before relying on the capture. No paid inference requests are needed for unit verification.
+Store local diagnostics outside the repository, e.g. `/path/to/.dsh/diagnostics/cache-http.jsonl` (Windows: `C:/Users/<Username>/.dsh/diagnostics/cache-http.jsonl`). After restart, verify a request/response/usage sequence during normal usage before relying on the capture. No paid inference requests are needed for unit verification.

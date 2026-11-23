@@ -312,3 +312,118 @@ test('editRecovery supports ctx.fs.readFile and skips oversized files cleanly', 
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('editRecovery preflights size via stat before reading, supports bounded readBytes/streamText, and never falls back when ctx.get("fs") throws', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-edit-rec-preflight-'));
+  const diskTarget = path.join(tempDir, 'disk.ts');
+  fs.writeFileSync(diskTarget, 'const secret = "disk-only";\n', 'utf8');
+
+  try {
+    // 1. stat reports oversized file -> readFile/readBytes/readText must never be invoked
+    let readCalls = 0;
+    const hooksOversized = new Map();
+    applyEditRecovery({
+      on(name, cb) { hooksOversized.set(name, cb); },
+      get(name) {
+        if (name !== 'fs') return undefined;
+        return {
+          resolve: async filePath => ({ targetKey: filePath }),
+          stat: async () => ({ type: 'file', size: 10000 }),
+          readBytes: async () => { readCalls++; return Buffer.from('should not read'); },
+          readFile: async () => { readCalls++; return 'should not read'; },
+          readText: async () => { readCalls++; return 'should not read'; }
+        };
+      }
+    }, { maxInspectBytes: 4096 });
+    const oversizedDecision = await hooksOversized.get('tools/post-execute')(
+      { name: 'edit', arguments: { file_path: 'huge.ts', old_string: 'const a = 1;', new_string: 'const a = 2;' }, agent: { session: {} } },
+      { isError: true, error: { message: 'old_string not found' } },
+      async () => undefined
+    );
+    assert.equal(readCalls, 0);
+    assert.equal(oversizedDecision, undefined);
+
+    // 2. Bounded readBytes seam works directly without readFile/readText
+    const hooksBytes = new Map();
+    let requestedCap = 0;
+    applyEditRecovery({
+      on(name, cb) { hooksBytes.set(name, cb); },
+      get(name) {
+        if (name !== 'fs') return undefined;
+        return {
+          resolve: async filePath => ({ targetKey: filePath }),
+          stat: async () => ({ type: 'file', size: 32 }),
+          readBytes: async (_target, _signal, cap) => {
+            requestedCap = cap;
+            return Buffer.from('const alpha = 1;\nconst beta = 2;\n');
+          }
+        };
+      }
+    }, { maxInspectBytes: 4096 });
+    const bytesDecision = await hooksBytes.get('tools/post-execute')(
+      { name: 'edit', arguments: { file_path: 'mod.ts', old_string: 'const beta = 99;', new_string: 'const beta = 3;' }, agent: { session: {} } },
+      { isError: true, error: { message: 'old_string not found' } },
+      async () => undefined
+    );
+    assert.equal(requestedCap, 4096);
+    assert.equal(bytesDecision?.kind, 'block');
+    assert.match(bytesDecision.feedback[0].text, /2 \| const beta = 2;/);
+
+    // 3. Throwing ctx.get('fs') must never fall back to local disk
+    const hooksThrow = new Map();
+    applyEditRecovery({
+      on(name, cb) { hooksThrow.set(name, cb); },
+      get(name) {
+        if (name === 'fs') throw new Error('fs denied');
+        return undefined;
+      }
+    });
+    const throwDecision = await hooksThrow.get('tools/post-execute')(
+      { name: 'edit', arguments: { file_path: diskTarget, old_string: 'const secret = "wrong";', new_string: 'const secret = "x";' }, agent: { session: {} } },
+      { isError: true, error: { message: 'old_string not found' } },
+      async () => undefined
+    );
+    assert.equal(throwDecision, undefined);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('editRecovery honors strict maxHintBytes including truncation suffix and isolates negative line-voting offsets', () => {
+  const longLines = Array.from({ length: 30 }, (_, i) => `export const longSymbolLine${i} = "${'v'.repeat(180)}";`).join('\n');
+  const tightHint = buildEditFailureHint(longLines, `export const longSymbolLine15 = "${'v'.repeat(179)}X";`, {
+    filePath: 'tight.ts',
+    maxHintBytes: 256,
+    contextLines: 6,
+    maxSnippetLines: 20
+  });
+  assert.ok(Buffer.byteLength(tightHint, 'utf8') <= 256, `Hint exceeded 256 bytes: ${Buffer.byteLength(tightHint, 'utf8')}`);
+  assert.match(tightHint, /truncated/);
+
+  // Unrelated lines with distinct negative offsets (-1, -3, -2) must not collide at offset 0 and beat a true block deeper in the file.
+  const doc = [
+    'const topNoiseA = 1;',
+    'const topNoiseB = 2;',
+    'const topNoiseC = 3;',
+    'const filler0 = 0;',
+    'const filler1 = 1;',
+    'const filler2 = 2;',
+    'const filler3 = 3;',
+    'const filler4 = 4;',
+    'function realTarget() {',
+    '  const realStep1 = computeA();',
+    '  const realStep2 = computeB();',
+    '  return realStep1 + realStep2;',
+    '}'
+  ].join('\n');
+  const query = [
+    'function realTarget() {',
+    '  const realStep1 = computeA();',
+    '  const topNoiseB = 2;',
+    '  const topNoiseA = 1;',
+    '  const topNoiseC = 3;'
+  ].join('\n');
+  const match = findBestEditMatch(doc, query);
+  assert.equal(match.kind, 'fuzzy-match');
+  assert.equal(match.startLine, 9);
+});

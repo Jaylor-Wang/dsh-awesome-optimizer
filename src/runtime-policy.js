@@ -145,13 +145,130 @@ export function classifyToolCall(name, args = {}, cwd = '') {
   return { name, opClass, targetPath, byteLength };
 }
 
+function analyzeShellCommand(cmd) {
+  const segments = [];
+  let rawBuf = '';
+  let unquotedBuf = '';
+  let unquotedAll = '';
+  let quote = null; // "'" | '"' | null
+  let chainGroups = 0;
+  let currentGroupHasSegment = false;
+
+  const flushSegment = () => {
+    const raw = rawBuf.trim();
+    const unquoted = unquotedBuf.trim();
+    if (raw || unquoted) {
+      segments.push({ raw, unquoted });
+      currentGroupHasSegment = true;
+    }
+    rawBuf = '';
+    unquotedBuf = '';
+  };
+
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i];
+    if (quote === "'") {
+      // POSIX single quotes do not support backslash escaping.
+      rawBuf += ch;
+      if (ch === "'") {
+        quote = null;
+        unquotedBuf += "''";
+        unquotedAll += "''";
+      }
+      continue;
+    }
+    if (quote === '"') {
+      rawBuf += ch;
+      if (ch === '\\' && i + 1 < cmd.length) {
+        rawBuf += cmd[++i];
+        continue;
+      }
+      if (ch === '"') {
+        quote = null;
+        unquotedBuf += '""';
+        unquotedAll += '""';
+      }
+      continue;
+    }
+    if (ch === '\\' && i + 1 < cmd.length) {
+      const escaped = ch + cmd[++i];
+      rawBuf += escaped;
+      unquotedBuf += escaped;
+      unquotedAll += escaped;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      rawBuf += ch;
+      continue;
+    }
+    if (ch === ';' || ch === '\n' || ch === '\r') {
+      if (ch === '\r' && cmd[i + 1] === '\n') i++;
+      flushSegment();
+      if (currentGroupHasSegment) {
+        chainGroups++;
+        currentGroupHasSegment = false;
+      }
+      unquotedAll += ch === ';' ? ';' : '\n';
+      continue;
+    }
+    if ((ch === '&' && cmd[i + 1] === '&') || (ch === '|' && cmd[i + 1] === '|')) {
+      flushSegment();
+      if (currentGroupHasSegment) {
+        chainGroups++;
+        currentGroupHasSegment = false;
+      }
+      unquotedAll += ch + ch;
+      i++;
+      continue;
+    }
+    if (ch === '|') {
+      flushSegment();
+      unquotedAll += '|';
+      continue;
+    }
+    rawBuf += ch;
+    unquotedBuf += ch;
+    unquotedAll += ch;
+  }
+
+  if (quote === "'") {
+    unquotedBuf += "''";
+    unquotedAll += "''";
+  } else if (quote === '"') {
+    unquotedBuf += '""';
+    unquotedAll += '""';
+  }
+  flushSegment();
+  if (currentGroupHasSegment) chainGroups++;
+
+  return {
+    segments,
+    unquoted: unquotedAll,
+    hasChainSeparator: chainGroups > 1
+  };
+}
+
+const MUTATING_OP_CLASSES = new Set(['write', 'edit', 'shell', 'eval']);
+
 /**
  * Core runtime policy manager managing state, fingerprinting, and pre-dispatch guards.
  */
 export class RuntimePolicyManager {
-  constructor(config = {}) {
+  constructor(config = {}, workingDirectory) {
     this.config = RuntimePolicyConfig(config);
+    this.workingDirectory = workingDirectory;
     this.sessionStates = new WeakMap();
+  }
+
+  #resolveCwd(session, fallback = '') {
+    if (fallback) return fallback;
+    try {
+      const cwd = this.workingDirectory?.get?.(session);
+      return typeof cwd === 'string' ? cwd : '';
+    } catch {
+      return '';
+    }
   }
 
   #createTurnState(turn, cwd = '') {
@@ -161,6 +278,8 @@ export class RuntimePolicyManager {
       cwd,
       fingerprintCounts: new Map(),
       consecutiveFingerprints: new Map(),
+      invocationFailures: new Map(),
+      blockedInvocationKeys: new Set(),
       lastFingerprint: null,
       lastInvocationKey: null,
       blockedInvocationKey: null,
@@ -187,15 +306,17 @@ export class RuntimePolicyManager {
     let state = this.sessionStates.get(session);
     const targetTurn = turn ?? state?.turn ?? 1;
     if (!state || state.turn !== targetTurn) {
-      state = this.#createTurnState(targetTurn, state?.cwd ?? '');
+      state = this.#createTurnState(targetTurn, this.#resolveCwd(session, state?.cwd ?? ''));
       this.sessionStates.set(session, state);
+    } else if (!state.cwd) {
+      state.cwd = this.#resolveCwd(session);
     }
     return state;
   }
 
   onTurnStart(session, turn) {
     const existing = this.sessionStates.get(session);
-    this.sessionStates.set(session, this.#createTurnState(turn, existing?.cwd ?? ''));
+    this.sessionStates.set(session, this.#createTurnState(turn, this.#resolveCwd(session, existing?.cwd ?? '')));
   }
 
   onTurnEnd(_session) {
@@ -215,6 +336,8 @@ export class RuntimePolicyManager {
     state.lastInvocationKey = null;
     state.blockedInvocationKey = null;
     state.consecutiveInvocationCount = 0;
+    state.invocationFailures.clear();
+    state.blockedInvocationKeys.clear();
     state.lastRecord = null;
   }
 
@@ -280,11 +403,6 @@ export class RuntimePolicyManager {
       state.repeatedFingerprintHits++;
     }
 
-    if (isError && state.consecutiveInvocationCount >= this.config.noProgressLimit) {
-      state.noProgressHits++;
-      state.noProgressFingerprints.add(fp);
-    }
-
     const record = {
       step: state.step,
       callId: exec.callId,
@@ -300,6 +418,25 @@ export class RuntimePolicyManager {
       repeated: previousCount > 0,
       consecutive: consecutiveCount
     };
+
+    if (isError) {
+      const prevFailure = state.invocationFailures.get(key);
+      const nextFailureCount = prevFailure?.failureKey === failureKey ? prevFailure.count + 1 : 1;
+      state.invocationFailures.set(key, { count: nextFailureCount, failureKey, record });
+      if (nextFailureCount >= this.config.noProgressLimit) {
+        state.noProgressHits++;
+        state.noProgressFingerprints.add(fp);
+      }
+    } else {
+      state.invocationFailures.delete(key);
+      state.blockedInvocationKeys.delete(key);
+      // A succeeding state-mutating action may resolve prior failures; read-only calls do not reset alternating loops.
+      if (MUTATING_OP_CLASSES.has(opClass)) {
+        state.invocationFailures.clear();
+        state.blockedInvocationKeys.clear();
+      }
+    }
+
     state.lastRecord = record;
     if (!isError || key !== state.blockedInvocationKey) state.blockedInvocationKey = null;
 
@@ -321,7 +458,7 @@ export class RuntimePolicyManager {
     const classified = classifyToolCall(exec.name, exec.arguments, state.cwd);
     const { name, opClass, targetPath } = classified;
     const key = invocationKey(name, exec.arguments ?? {}, classified, state.cwd);
-    if (state.blockedInvocationKey === key) {
+    if (state.blockedInvocationKey === key || state.blockedInvocationKeys.has(key)) {
       state.policyDenials++;
       if (exec.token !== undefined) state.deniedTokens.add(exec.token);
       return {
@@ -334,12 +471,11 @@ export class RuntimePolicyManager {
     if (name === 'bash' && exec.arguments && typeof exec.arguments.command === 'string') {
       const cmd = exec.arguments.command;
       const cmdBytes = Buffer.byteLength(cmd, 'utf8');
-      // Strip quoted string literals to prevent false positives in commit messages / echo args
-      const unquoted = cmd
-        .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, '""')
-        .replace(/'[^'\\]*(?:\\.[^'\\]*)*'/g, "''");
-      const isHeredoc = /(?:^|[\s;&|])(?:cat|type)\s*<<\s*(?:''|""|[A-Za-z_])/i.test(unquoted);
-      const isInlineScript = /(?:^|[\s;&|])(?:python|python3|node|pwsh|powershell)(?:\s+-[\w-]+)*\s+(?:-c|-e|-Command)\s+(?:""|''|\S)/i.test(unquoted);
+      const { segments, hasChainSeparator } = analyzeShellCommand(cmd);
+      const isHeredoc = segments.some(seg => /(?<!<)<<(?!<)-?\s*(?:''|""|[A-Za-z_])/i.test(seg.unquoted));
+      const isInlineScript = segments.some(seg =>
+        /(?:^|\s)(?:python|python3|node|pwsh|powershell)(?:\s+-[\w-]+)*\s+(?:-c|-e|-Command)\s+(?:""|''|\S)/i.test(seg.unquoted)
+      );
 
       const maxBytes = this.config.maxShellCommandBytes ?? 4096;
       const maxScriptBytes = this.config.maxInlineScriptBytes ?? 512;
@@ -374,9 +510,12 @@ export class RuntimePolicyManager {
         };
       }
 
-      // Guard against blocked file:// URLs in playwright-cli
-      const isPlaywrightCmd = /(?:^|[\s;&|])playwright-cli\b/i.test(unquoted);
-      const isPlaywrightFileUrl = isPlaywrightCmd && /\bplaywright-cli\s+(?:open|goto)\s+['"]?file:/i.test(cmd);
+      // Guard against blocked file:// URLs in playwright-cli (per-segment to prevent cross-command false positives)
+      const isPlaywrightFileUrl = segments.some(seg =>
+        /(?:^|\s)playwright-cli\b/i.test(seg.unquoted)
+        && /\b(?:open|goto)\b/i.test(seg.unquoted)
+        && /\b(?:open|goto)\s+['"]?file:/i.test(seg.raw)
+      );
       if (isPlaywrightFileUrl) {
         state.shellPayloadBlocks++;
         state.policyDenials++;
@@ -392,10 +531,11 @@ export class RuntimePolicyManager {
         };
       }
 
-      if (/(&&|;)/.test(unquoted)) {
-        const chainedPublish = /(?:^|[\s;&|])npm\s+publish\b/i.test(unquoted);
+      if (hasChainSeparator) {
+        const chainedPublish = segments.some(seg => /(?:^|\s)npm\s+publish\b/i.test(seg.unquoted));
         const blockChainedHeavy = this.config.disallowChainedHeavyCommands ?? this.config.disallowChainedNetworkCommands;
-        const chainedTestOrBuild = blockChainedHeavy && /(?:^|[\s;&|])(?:npm\s+(?:test|t|run\s+build)|vitest)\b/i.test(unquoted);
+        const chainedTestOrBuild = blockChainedHeavy
+          && segments.some(seg => /(?:^|\s)(?:npm\s+(?:test|t|run\s+build)|vitest)\b/i.test(seg.unquoted));
         if (chainedPublish || chainedTestOrBuild) {
           state.shellPayloadBlocks++;
           state.policyDenials++;
@@ -415,35 +555,39 @@ export class RuntimePolicyManager {
       }
     }
 
-    const lastRecord = state.lastRecord;
-    const candidateFingerprint = computeFingerprint({
-      name,
-      targetPath: normalizePath(targetPath, state.cwd),
-      opClass,
-      errorCode: lastRecord?.errorCode,
-      isError: true,
-      byteLength: classified.byteLength
-    });
-    if (lastRecord?.isError && lastRecord.failureKey === `${key}:${candidateFingerprint}`) {
+    const trackedFailure = state.invocationFailures.get(key);
+    const priorRecord = trackedFailure?.record;
+    if (priorRecord?.isError && trackedFailure.count >= this.config.noProgressLimit) {
       const normTarget = normalizePath(targetPath, state.cwd);
-      if (lastRecord.name === name && lastRecord.opClass === opClass && lastRecord.targetPath === normTarget) {
-        const consecutive = state.consecutiveInvocationCount;
-        if (consecutive >= this.config.noProgressLimit) {
-          state.blockedInvocationKey = key;
-          state.noProgressHits++;
-          state.policyDenials++;
-          state.noProgressFingerprints.add(lastRecord.fingerprint);
-          if (exec.token !== undefined) state.deniedTokens.add(exec.token);
-          return {
-            kind: 'deny',
-            reason: JSON.stringify({
-              code: 'NO_PROGRESS',
-              reason: `Tool '${name}' on '${normTarget || 'target'}' failed ${consecutive} times consecutively without progress (limit: ${this.config.noProgressLimit}).`,
-              nextAction: 'Inspect the prior error and change the command, arguments, or target before retrying.',
-              retryable: false
-            })
-          };
-        }
+      const candidateFingerprint = computeFingerprint({
+        name,
+        targetPath: normTarget,
+        opClass,
+        errorCode: priorRecord.errorCode,
+        isError: true,
+        byteLength: classified.byteLength
+      });
+      if (
+        priorRecord.failureKey === `${key}:${candidateFingerprint}`
+        && priorRecord.name === name
+        && priorRecord.opClass === opClass
+        && priorRecord.targetPath === normTarget
+      ) {
+        state.blockedInvocationKey = key;
+        state.blockedInvocationKeys.add(key);
+        state.noProgressHits++;
+        state.policyDenials++;
+        state.noProgressFingerprints.add(priorRecord.fingerprint);
+        if (exec.token !== undefined) state.deniedTokens.add(exec.token);
+        return {
+          kind: 'deny',
+          reason: JSON.stringify({
+            code: 'NO_PROGRESS',
+            reason: `Tool '${name}' on '${normTarget || 'target'}' failed ${trackedFailure.count} times without intervening state progress (limit: ${this.config.noProgressLimit}).`,
+            nextAction: 'Inspect the prior error and change the command, arguments, or target before retrying.',
+            retryable: false
+          })
+        };
       }
     }
     return { kind: 'allow' };
@@ -494,10 +638,12 @@ export function applyRuntimePolicy(ctx, rawConfig = {}) {
   const config = RuntimePolicyConfig(rawConfig);
   if (config.mode === 'off') return null;
 
-  const manager = new RuntimePolicyManager(config);
+  const workingDirectory = ctx.get ? ctx.get('workingDirectory') : undefined;
+  const manager = new RuntimePolicyManager(config, workingDirectory);
 
   ctx.on('session/event', (session, event) => {
     if (event.type === 'turn/start') {
+      if (!manager.workingDirectory && ctx.get) manager.workingDirectory = ctx.get('workingDirectory');
       manager.onTurnStart(session, event.data.turn);
     } else if (event.type === 'turn/end') {
       manager.onTurnEnd(session);
@@ -510,6 +656,7 @@ export function applyRuntimePolicy(ctx, rawConfig = {}) {
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (!exec.agent) return next();
+    if (!manager.workingDirectory && ctx.get) manager.workingDirectory = ctx.get('workingDirectory');
     const decision = manager.evaluatePreExecute(exec.agent.session, exec);
     if (decision.kind === 'deny') {
       return decision;

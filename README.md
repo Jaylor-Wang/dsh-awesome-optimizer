@@ -5,30 +5,19 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-192%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-202%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 High-performance runtime policy guards, persistent Python & Node evaluation daemons, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
 
-## Highlights in v4.0.0
+## Highlights in v4.2.0
 
-- **Bash policy default**. Bash chains containing tests and builds are allowed by default. Set `runtimePolicy.disallowChainedHeavyCommands: true` to restore the previous restriction. The `enforce` policy still blocks `npm publish` in `&&` or `;` chains.
-- **Experimental multi-window reads**. `find_and_read` can group windows from the same file when the host provides the opt-in capability. The pilot is disabled by default, and its local adapter is available in the source checkout.
-- **Prompt template**. The `SYSTEM.md` example updates the shell guidance, verification rules, and `ast-grep` exit-code documentation.
-
-### v3.7.0 highlights
-
-- `find_and_read` favors exact-name JavaScript and TypeScript function declarations while preserving the original plan's pattern coverage. Single-file searches compare feasible window plans, and byte-limited output prioritizes matched evidence before surrounding context.
-- Persistent evaluation bounds worker startup and cleans up cancelled startup attempts. Turn telemetry isolates asynchronous callback failures, and HTTP diagnostics apply byte limits per SSE event regardless of chunk boundaries.
-
-### v3.6.0 highlights
-
-- **Persistent evaluation**: Python and Node tools still register and prewarm by default. Their workers run with host permissions. Set `persistentEval.enabled: false` for untrusted or sandbox-only profiles.
-- **Strict batch editing**: `edit_batch` in atomic mode requires complete preflight and stops at the first execution failure. `EDIT_BATCH_PARTIAL` reports confirmed partial application. Applied edits remain on disk.
-- **Side-effect-free summaries**: Querying an untracked turn leaves the current telemetry and policy state intact.
-- **Cache reporting**: Turn totals use adapter-normalized usage, and `cacheUsageCoverage` reports field coverage per stream attempt. Cache totals are `null` when the adapter reported no value. Use HTTP diagnostics for provider-level counts and field presence.
+- **Hardened runtime policy & convergence**: Rewrote Bash command analysis as a single-pass quote/segment parser (fixing quote-interleaving bypasses, POSIX single-quote escapes, `||`/newline chaining, generic heredocs, and `playwright-cli` flag handling), extended `NO_PROGRESS` detection to alternating read-only failure loops with mutating-progress resets, hydrated initial session `workingDirectory` on the first turn, and fixed `convergence` error suppression so a single failed step suppresses only the immediately following step.
+- **Persistent eval reliability & security baseline**: Fixed strict RFC 8259 JSON serialization for `NaN`/`Infinity` in `py_worker.py` and `node_worker.mjs`, preserved cross-realm VM error stacks (`util.types.isNativeError`), serialized pipelined Node requests, added `_drainQueue` re-entrancy guards and watchdog fallbacks, stripped sensitive credential/`DSH_*` env vars by default (`sanitizeEnv: true`), gated tool admission on host `bash` availability (`requireShellTool: true`), and exposed a standard Cordis sub-plugin interface on `./persistent-eval`.
+- **Bounded preflight, memory hygiene & observability**: Added `stat` size preflight and bounded `readBytes`/`streamText` seams to `editRecovery` and `edit_batch` (`maxPreflightBytes`), unified CRLF preflight normalization, eliminated strong-reference session/cache leaks across `readGuard`, `telemetry`, `DaemonPool`, and `customPrompt` (`maxWatchedWorkspaces`), fixed `customPrompt` `$DSH_HOME` resolution and multi-candidate hot-reload, counted per-line `linesTruncated`, aggregated `editRecovery`/`contextCompaction`/`convergenceGuidance` in turn telemetry, and handled trailing SSE events on EOF in HTTP cache diagnostics.
+- **Leaner surface & verified export parity**: Removed the unused `prompt-linter` module and the `experimentalReadRanges` pilot, aligned symmetric root/subpath `.d.ts` and runtime exports (including `extractCodeOutline`/`formatCodeOutline` on `./read-guard`), and added automated `.d.ts`-to-runtime export contract tests.
 
 ---
 
@@ -44,8 +33,6 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
   Uses debounced `fs.watch` to detect prompt file edits and applies them reactively on the very next turn without restarting the DSH process.
 - **Flexible Cascading Strategies**:
   Supports `concat` (cascading global and workspace prompts, default) and `workspace-override` (repo prompt completely replaces global prompt).
-- **Built-in Prompt Linter & Auto-Fixer**:
-  Provides `lintPrompt` / `fixPrompt` / `lintPromptFile` APIs with **preset-aware dynamic tool validation**. Eliminates subjective tool assumptions by verifying tool directives directly against active plugins: flags redundant defensive clauses for unloaded tools or conflicts with actively loaded tools, checks weak modals (e.g. upgrading soft wording to direct imperatives), unclosed backticks, and enforces RFC 2119 uppercase constraints with actionable health scoring (0-100).
 
 | Dimension | Official Default System Prompt | Optimized with This Plugin | Savings |
 | :--- | :--- | :--- | :--- |
@@ -60,7 +47,6 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
   - `maxWindowLines: 120`: maximum requested lines per slice, preventing dense chained matches from becoming whole-file reads.
   - `maxReadLines: 600`: maximum total requested lines across all files and windows in one call.
   - `readConcurrency: 3`: maximum simultaneous reads per batch; remaining output space is checked before the next batch. Matches hidden by native read truncation remain in the recovery index.
-  - `experimentalReadRanges: false`: opt-in for local host pilots. A host must explicitly provide `optimizerReadRanges` with `{ version: 1 }` and an executable `optimizer_read_ranges` tool subject to its read policies. The tool accepts `{ file_path, ranges: [{ offset, limit }] }` for 2–8 windows and returns one policy-approved text block per range in request order. Only already-admitted windows in the same batch are grouped. If the capability is absent, native `read` handles each window. A denial or error from the grouped tool is reported without retrying through another tool. For a local checkout, load `scripts/local-read-ranges.mjs` by absolute path in a DSH profile patch and set `compositeTools.experimentalReadRanges: true` in the optimizer entry. Configure the adapter with the host's native read caps and apply any tool-name-specific `read` policies to `optimizer_read_ranges` too.
   - Windows prioritize uncovered regex patterns, then diminishing returns for repeated patterns, line cost, and file diversity. Canonical paths and line numbers break ties deterministically. `maxFiles` bounds selected files without excluding valuable windows in other files before ranking.
   - These bounds cover requested lines and returned bytes, not a fixed number of filesystem bytes or tokens.
 - **`readGuard` inspection preflight**:
@@ -135,7 +121,7 @@ Only when customizing paths or disabling specific subsystems do you need to add 
 
     # Or adjust batch limits
     compositeTools:
-      maxBatchFiles: 15
+      maxFiles: 8
       maxBatchEdits: 15
 
     # Or relax the no-progress circuit breaker

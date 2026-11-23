@@ -57,7 +57,8 @@ export declare function classifyToolCall(name: string, args?: Record<string, unk
 
 export declare class RuntimePolicyManager {
   readonly config: RuntimePolicyOptions;
-  constructor(config?: RuntimePolicyOptions);
+  workingDirectory?: any;
+  constructor(config?: RuntimePolicyOptions, workingDirectory?: any);
   onTurnStart(session: unknown, turn: number): void;
   onTurnEnd(session: unknown): void;
   onStepStart(session: unknown, turn: number, step: number): void;

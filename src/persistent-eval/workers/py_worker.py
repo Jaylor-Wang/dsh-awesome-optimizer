@@ -86,19 +86,22 @@ def serialize_result(result):
     if result is None:
         return None, None
     if isinstance(result, float):
-        rounded = round(result, 10)
-        if abs(result - rounded) < 1e-12:
-            result_repr = str(rounded)
+        if math.isfinite(result):
+            rounded = round(result, 10)
+            if abs(result - rounded) < 1e-12:
+                result_repr = str(rounded)
+            else:
+                result_repr = repr(result)
         else:
             result_repr = repr(result)
     else:
         result_repr = repr(result)
     try:
-        # Check if directly JSON-serializable
-        json.dumps(result)
+        # Require strict RFC 8259 JSON so NaN/Infinity never break Node JSON.parse
+        json.dumps(result, allow_nan=False)
         return result, result_repr
-    except (TypeError, OverflowError):
-        # Fall back to string representation
+    except (TypeError, OverflowError, ValueError):
+        # Fall back to string representation (covers non-finite floats and custom objects)
         return result_repr, result_repr
 
 class BoundedTextCapture(io.TextIOBase):
@@ -256,7 +259,19 @@ def main():
             "executionTimeMs": elapsed_ms
         }
 
-        frame = json.dumps(resp, ensure_ascii=False) + "\n"
+        try:
+            frame = json.dumps(resp, ensure_ascii=False, allow_nan=False) + "\n"
+        except (TypeError, OverflowError, ValueError) as ser_err:
+            frame = json.dumps({
+                "id": req_id,
+                "success": False,
+                "stdout": captured_stdout.getvalue(),
+                "stderr": captured_stderr.getvalue(),
+                "result": None,
+                "resultRepr": None,
+                "error": f"Failed to serialize response frame: {ser_err}",
+                "executionTimeMs": elapsed_ms
+            }, ensure_ascii=False, allow_nan=False) + "\n"
         REAL_STDOUT.buffer.write(frame.encode("utf-8"))
         REAL_STDOUT.buffer.flush()
 

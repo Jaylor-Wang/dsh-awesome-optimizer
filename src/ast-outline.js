@@ -23,7 +23,7 @@ export function needsAstOutline(content, filePath, lexical, mode) {
 
 /** Parse only the authorized snapshot. Never pass a model-controlled path to the CLI. */
 export function runAstOutline(content, filePath, {
-  command = 'ast-grep', timeoutMs = 750, maxOutputBytes = 256 * 1024, signal
+  command = 'ast-grep', timeoutMs = 750, maxOutputBytes = 256 * 1024, signal, lexical
 } = {}) {
   const language = LANGUAGES.get(path.extname(filePath).toLowerCase());
   if (!language || signal?.aborted) return Promise.resolve({ status: signal?.aborted ? 'aborted' : 'unsupported' });
@@ -45,7 +45,7 @@ export function runAstOutline(content, filePath, {
     const stop = status => {
       if (settled || failure) return;
       failure = status;
-      child?.kill('SIGKILL');
+      try { child?.kill('SIGKILL'); } catch {}
       // Do not hold a read hook indefinitely if the platform never emits close.
       killTimer = setTimeout(() => finish({ status }), 100);
     };
@@ -80,11 +80,11 @@ export function runAstOutline(content, filePath, {
           if (language === 'typescript') {
             const modules = value[0].items.filter(item => item.symbolType === 'module');
             if (modules.length) {
-              const lexical = buildCodeOutline(content, filePath);
+              const lexicalOutline = lexical ?? buildCodeOutline(content, filePath);
               for (const item of modules) {
                 const start = item.range.start.line + 1;
                 const end = item.range.end?.line + 1;
-                for (const entry of lexical.entries) {
+                for (const entry of lexicalOutline.entries) {
                   if (entry.line > start && entry.line <= end && !entries.some(existing => existing.line === entry.line)) {
                     entries.push({ ...entry, nested: true });
                   }
@@ -129,7 +129,7 @@ export async function buildAdaptiveOutline(content, filePath, options = {}, sign
   if (stats) stats.astAttempts++;
   const result = await runAstOutline(content, filePath, {
     command: options.astGrepCommand, timeoutMs: options.astTimeoutMs,
-    maxOutputBytes: options.astMaxOutputBytes, signal
+    maxOutputBytes: options.astMaxOutputBytes, signal, lexical
   });
   if (result.status === 'ok') {
     if (stats) stats.astSucceeded++;

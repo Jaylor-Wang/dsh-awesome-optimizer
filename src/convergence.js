@@ -52,8 +52,7 @@ export function applyConvergence(ctx, raw = {}) {
         reminderCharsAdded: 0,
         toolResults: 0,
         concluded: false,
-        stepHasError: false,
-        lastStepHadError: false
+        stepHasError: false
       };
       if (typeof session.snapshotEvents === 'function') {
         for (const event of session.snapshotEvents()) {
@@ -91,8 +90,7 @@ export function applyConvergence(ctx, raw = {}) {
         startSeq: event.seq,
         toolResults: 0,
         concluded: false,
-        stepHasError: false,
-        lastStepHadError: false
+        stepHasError: false
       });
       return;
     }
@@ -102,7 +100,6 @@ export function applyConvergence(ctx, raw = {}) {
       state.steps++;
       state.toolResults = 0;
       state.concluded = false;
-      state.lastStepHadError = state.stepHasError;
       state.stepHasError = false;
     }
     if (event.type === 'user/message' && event.data.source?.kind === SOURCE) {
@@ -119,7 +116,6 @@ export function applyConvergence(ctx, raw = {}) {
     state.toolResults++;
     if (result?.isError || result?.error) {
       state.stepHasError = true;
-      state.lastStepHadError = true;
     }
     state.concluded ||= result.concludesTurn === true;
   });
@@ -138,7 +134,7 @@ export function applyConvergence(ctx, raw = {}) {
 
     if (state.remindersSent >= maxReminders) return decision;
     if (currentStep < nextDueStep) return decision;
-    if (state.lastStepHadError || state.stepHasError) return decision;
+    if (state.stepHasError) return decision;
     if (decision.messages.length === 0 && (state.toolResults === 0 || state.concluded)) return decision;
 
     const reminder = createUserMessage({

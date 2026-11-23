@@ -28,10 +28,10 @@ export const CompositeToolsConfig = z.object({
   maxWindowLines: z.number().step(1).min(1).max(1000).default(120),
   maxReadLines: z.number().step(1).min(1).max(10000).default(600),
   readConcurrency: z.number().step(1).min(1).max(8).default(3),
-  experimentalReadRanges: z.boolean().default(false),
   maxBatchEdits: z.number().step(1).min(1).max(25).default(10),
   maxLineChars: z.number().step(1).min(100).max(50000).default(1500),
   maxTotalBytes: z.number().step(1).min(512).max(1024 * 1024).default(24576),
+  maxPreflightBytes: z.number().step(1).min(4096).max(16 * 1024 * 1024).default(2 * 1024 * 1024),
   atomicEdits: z.boolean().default(false)
 });
 
@@ -146,26 +146,120 @@ function countOccurrences(haystack, needle) {
   return count;
 }
 
-async function readFileForPreflight(filePath, cwd, fsService, signal, resolvedTarget) {
+const UNAVAILABLE_FS = Object.freeze({});
+
+async function readBoundedLocalPreflight(resolvedPath, signal, maxBytes) {
+  let handle;
+  try {
+    handle = await fs.open(resolvedPath, 'r');
+    const stat = await handle.stat();
+    if (!stat.isFile() || signal?.aborted) return null;
+    if (stat.size > maxBytes) return { ok: false, oversized: true };
+    const chunks = [];
+    let size = 0;
+    const chunkSize = Math.min(65536, Math.max(stat.size + 1, 4096));
+    while (size <= maxBytes) {
+      if (signal?.aborted) return null;
+      const toRead = Math.min(chunkSize, maxBytes + 1 - size);
+      const buf = Buffer.allocUnsafe(toRead);
+      const { bytesRead } = await handle.read(buf, 0, toRead, null);
+      if (!bytesRead) break;
+      size += bytesRead;
+      if (size > maxBytes) return { ok: false, oversized: true };
+      chunks.push(bytesRead === buf.length ? buf : buf.subarray(0, bytesRead));
+    }
+    if (signal?.aborted) return null;
+    return { ok: true, content: new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size)) };
+  } catch (err) {
+    return err?.code === 'ENOENT' ? { ok: false, missing: true } : null;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+async function readFileForPreflight(filePath, cwd, fsService, signal, resolvedTarget, maxPreflightBytes = 2 * 1024 * 1024) {
+  if (signal?.aborted) return null;
   if (fsService) {
     // A service failure is authoritative; never bypass sandbox or cancellation through local disk.
-    if (typeof fsService.readFile === 'function') {
+    let target = resolvedTarget;
+    if (target === undefined && typeof fsService.resolve === 'function') {
       try {
-        const content = await fsService.readFile(filePath, { cwd, signal, encoding: 'utf8' });
-        return typeof content === 'string' ? { ok: true, content } : null;
+        target = await fsService.resolve(filePath, { cwd, signal });
       } catch (err) {
         return err?.code === 'ENOENT' || err?.code === 'FS_NOT_FOUND'
           ? { ok: false, missing: true }
           : null;
       }
     }
+    if (signal?.aborted) return null;
+
+    if (target !== undefined && typeof fsService.stat === 'function') {
+      try {
+        const info = await fsService.stat(target, signal);
+        if (signal?.aborted) return null;
+        if (info !== undefined) {
+          if (info.type !== undefined && info.type !== 'file') return null;
+          if (Number.isFinite(info.size) && (info.size < 0 || info.size > maxPreflightBytes)) {
+            return { ok: false, oversized: true };
+          }
+        }
+      } catch (err) {
+        return err?.code === 'ENOENT' || err?.code === 'FS_NOT_FOUND'
+          ? { ok: false, missing: true }
+          : null;
+      }
+    }
+
+    if (typeof fsService.readBytes === 'function') {
+      try {
+        const bytes = await fsService.readBytes(target ?? filePath, signal, maxPreflightBytes);
+        if (signal?.aborted || !bytes) return null;
+        if (bytes.byteLength > maxPreflightBytes) return { ok: false, oversized: true };
+        return { ok: true, content: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
+      } catch (err) {
+        return err?.code === 'ENOENT' || err?.code === 'FS_NOT_FOUND'
+          ? { ok: false, missing: true }
+          : null;
+      }
+    }
+
+    if (typeof fsService.streamText === 'function') {
+      try {
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of await fsService.streamText(target ?? filePath, signal)) {
+          if (signal?.aborted || typeof chunk !== 'string') return null;
+          size += Buffer.byteLength(chunk, 'utf8');
+          if (size > maxPreflightBytes) return { ok: false, oversized: true };
+          chunks.push(chunk);
+        }
+        return { ok: true, content: chunks.join('') };
+      } catch (err) {
+        return err?.code === 'ENOENT' || err?.code === 'FS_NOT_FOUND'
+          ? { ok: false, missing: true }
+          : null;
+      }
+    }
+
+    if (typeof fsService.readFile === 'function') {
+      try {
+        const content = await fsService.readFile(filePath, { cwd, signal, encoding: 'utf8' });
+        if (signal?.aborted || typeof content !== 'string') return null;
+        if (Buffer.byteLength(content, 'utf8') > maxPreflightBytes) return { ok: false, oversized: true };
+        return { ok: true, content };
+      } catch (err) {
+        return err?.code === 'ENOENT' || err?.code === 'FS_NOT_FOUND'
+          ? { ok: false, missing: true }
+          : null;
+      }
+    }
+
     if (typeof fsService.readText === 'function') {
       try {
-        const target = resolvedTarget ?? (typeof fsService.resolve === 'function'
-          ? await fsService.resolve(filePath, { cwd, signal })
-          : filePath);
-        const content = await fsService.readText(target, signal);
-        return typeof content === 'string' ? { ok: true, content } : null;
+        const content = await fsService.readText(target ?? filePath, signal);
+        if (signal?.aborted || typeof content !== 'string') return null;
+        if (Buffer.byteLength(content, 'utf8') > maxPreflightBytes) return { ok: false, oversized: true };
+        return { ok: true, content };
       } catch (err) {
         return err?.code === 'ENOENT' || err?.code === 'FS_NOT_FOUND'
           ? { ok: false, missing: true }
@@ -175,17 +269,12 @@ async function readFileForPreflight(filePath, cwd, fsService, signal, resolvedTa
     return null;
   }
 
-  // Standalone hosts without an fs service may use local preflight inspection.
-  try {
-    const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
-    const content = await fs.readFile(resolved, 'utf8');
-    return { ok: true, content };
-  } catch (err) {
-    return err?.code === 'ENOENT' ? { ok: false, missing: true } : null;
-  }
+  // Standalone hosts without an fs service may use bounded local preflight inspection.
+  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
+  return readBoundedLocalPreflight(resolved, signal, maxPreflightBytes);
 }
 
-function simulateEditsOnContent(initialContent, items, normalizeLineEndings = false) {
+function simulateEditsOnContent(initialContent, items, normalizeLineEndings = true) {
   const normalize = text => normalizeLineEndings ? text.replaceAll('\r\n', '\n') : text;
   let simulated = normalize(initialContent);
   for (const { index, item } of items) {
@@ -199,7 +288,7 @@ function simulateEditsOnContent(initialContent, items, normalizeLineEndings = fa
     }
     const matches = countOccurrences(simulated, oldString);
     if (matches === 0) {
-      const hint = buildEditFailureHint(simulated, item.old_string, { filePath: item.file_path });
+      const hint = buildEditFailureHint(simulated, oldString, { filePath: item.file_path });
       return {
         ok: false,
         failedIndex: index,
@@ -207,7 +296,7 @@ function simulateEditsOnContent(initialContent, items, normalizeLineEndings = fa
       };
     }
     if (!item.replace_all && matches > 1) {
-      const hint = buildEditFailureHint(simulated, item.old_string, { filePath: item.file_path });
+      const hint = buildEditFailureHint(simulated, oldString, { filePath: item.file_path });
       return {
         ok: false,
         failedIndex: index,
@@ -303,49 +392,14 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
   }
 
   async function readBatch(exec, batch) {
-    const nativeRead = async task => {
+    return Promise.all(batch.map(async task => {
       exec.signal.throwIfAborted();
       const result = await dispatchSubCall(exec, 'read', {
         file_path: task.file.displayPath, offset: task.win.start, limit: task.win.end - task.win.start + 1
       }, `${exec.callId}:find-read-${task.index}`);
       const text = (result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
       return result.isError ? { error: result.error?.message ?? text } : { text: stripReadEnvelope(text) };
-    };
-    const capability = config.experimentalReadRanges && ctx.get('optimizerReadRanges');
-    if (capability?.version !== 1 || !ctx.tools.executable('read', exec.agent, exec.toolSet) ||
-        !ctx.tools.executable('optimizer_read_ranges', exec.agent, exec.toolSet)) {
-      return Promise.all(batch.map(nativeRead));
-    }
-
-    const groups = new Map();
-    for (const task of batch) {
-      const group = groups.get(task.file) ?? [];
-      group.push(task);
-      groups.set(task.file, group);
-    }
-    const byIndex = new Map();
-    await Promise.all([...groups.values()].map(async group => {
-      const first = group[0];
-      if (group.length === 1) {
-        byIndex.set(first.index, await nativeRead(first));
-        return;
-      }
-      exec.signal.throwIfAborted();
-      const result = await dispatchSubCall(exec, 'optimizer_read_ranges', {
-        file_path: first.file.displayPath,
-        ranges: group.map(({ win }) => ({ offset: win.start, limit: win.end - win.start + 1 }))
-      }, `${exec.callId}:find-ranges-${first.index}`);
-      const blocks = result.content ?? [];
-      const valid = blocks.length === group.length && blocks.every(b => b.type === 'text');
-      const error = result.isError
-        ? blocks.filter(b => b.type === 'text').map(b => b.text).join('\n') || 'Multi-window read failed.'
-        : 'Multi-window read returned no usable windows.';
-      for (const [i, task] of group.entries()) {
-        // Post-execute can replace content while leaving the original value and meta intact.
-        byIndex.set(task.index, !result.isError && valid ? { text: blocks[i].text.trimEnd() } : { error });
-      }
     }));
-    return batch.map(task => byIndex.get(task.index));
   }
 
   if (config.findAndRead) {
@@ -634,9 +688,19 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
           state.editsRequested += edits.length;
         }
 
-        const fsService = ctx.get ? ctx.get('fs') : undefined;
-        const cwdService = ctx.get ? ctx.get('workingDirectory') : undefined;
-        const cwd = cwdService?.get?.(session) ?? '';
+        let fsService;
+        try {
+          fsService = ctx.get ? ctx.get('fs') : undefined;
+        } catch {
+          fsService = UNAVAILABLE_FS;
+        }
+        let cwd = '';
+        try {
+          const cwdService = ctx.get ? ctx.get('workingDirectory') : undefined;
+          cwd = cwdService?.get?.(session) ?? '';
+        } catch {
+          cwd = '';
+        }
 
         const editsByPath = new Map();
         const preflightBlockedPaths = new Map();
@@ -702,10 +766,16 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
           let content;
           for (const [filePath, target] of inputs) {
             exec.signal.throwIfAborted();
-            const probe = await readFileForPreflight(filePath, cwd, fsService, exec.signal, target);
+            const probe = await readFileForPreflight(filePath, cwd, fsService, exec.signal, target, config.maxPreflightBytes);
             exec.signal.throwIfAborted();
             if (probe?.missing) {
               preflightBlockedPaths.set(pathKey, `Pre-flight failed (${filePath}): target file does not exist (no changes written).`);
+              break;
+            }
+            if (probe?.oversized) {
+              if (isAtomic) {
+                preflightBlockedPaths.set(pathKey, `Pre-flight skipped (${filePath}): file exceeds maxPreflightBytes (${config.maxPreflightBytes} bytes; no edits dispatched).`);
+              }
               break;
             }
             if (!probe?.ok || (content !== undefined && probe.content !== content)) {
@@ -717,7 +787,7 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
             content = probe.content;
           }
           if (content !== undefined && !preflightBlockedPaths.has(pathKey)) {
-            const sim = simulateEditsOnContent(content, group, isAtomic);
+            const sim = simulateEditsOnContent(content, group, true);
             if (!sim.ok) preflightBlockedPaths.set(pathKey, sim.reason);
           }
         }

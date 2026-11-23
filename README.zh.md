@@ -5,30 +5,19 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-192%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-202%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、持久化 Python/Node 执行内核、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
 
-## v4.0.0 更新亮点
+## v4.2.0 更新亮点
 
-- **Bash 策略默认值**。测试和构建默认允许串联。可设置 `runtimePolicy.disallowChainedHeavyCommands: true` 恢复原限制。`enforce` 模式仍拦截用 `&&` 或 `;` 串联的 `npm publish`。
-- **多窗口读取试点**。宿主提供相应能力后，`find_and_read` 可合并同一文件的读取窗口。试点默认关闭，本地适配器可在源码仓库中获取。
-- **提示词模板**。`SYSTEM.md` 示例同步更新了 Shell 执行建议、验证规则及 `ast-grep` 退出码说明。
-
-### v3.7.0 搜索证据与运行边界改进
-
-- `find_and_read` 优先返回与查询词同名的 JavaScript 和 TypeScript 函数声明，同时保留原读取计划覆盖的查询模式。单文件搜索会比较预算内的读取计划，输出空间不足时优先保留命中证据。
-- 持久化求值限制 Worker 启动时间并清理取消的启动尝试。轮次遥测隔离异步回调错误，HTTP 诊断按 SSE 事件限制字节数，结果不受网络分块方式影响。
-
-### v3.6.0 批量编辑与轮次遥测改进
-
-- Python 和 Node 持久化求值仍默认注册并预热，Worker 以宿主权限运行。在不受信任或仅允许沙箱执行的环境中，设置 `persistentEval.enabled: false`。
-- `edit_batch` 的原子模式要求完整预检，并在首次执行失败时停止。`EDIT_BATCH_PARTIAL` 表示已确认有部分编辑生效，已写入的修改会保留。
-- 查询未跟踪的轮次时，当前遥测与策略状态会保留。
-- 轮次缓存总量使用适配器归一化后的用量，`cacheUsageCoverage` 统计各字段在流式尝试中的覆盖情况。适配器未报告的缓存总量为 `null`。HTTP 诊断保留供应商原始计数及字段是否存在。
+- **运行时策略与收敛加固**：重写单遍 Bash 引号/分段词法解析（修复引号交错绕过、POSIX 单引号反斜杠、`||`/换行串联、通用 heredoc 与带参数 `playwright-cli` 识别，消除跨命令误杀），`NO_PROGRESS` 熔断覆盖交替只读失败循环并在变更操作成功后自动复位，首轮自动水合会话 `workingDirectory`，修复 `convergence` 单次失败连抑两步的状态机缺陷。
+- **持久化求值可靠性与安全基线**：`py_worker.py` 与 `node_worker.mjs` 强制 RFC 8259 严格 JSON（消除 `NaN`/`Infinity` 导致的静默超时），修复 Node 跨 VM Realm 异常堆栈丢失并串行化入站请求，为 `StdioWorkerRunner` 增加队列排空互斥、单次超时精确上报与 watchdog 强杀兜底；默认剥离敏感凭据与 `DSH_*` 环境变量（`sanitizeEnv: true`）、按 `bash` 准入约束工具可见性（`requireShellTool: true`），并为 `./persistent-eval` 补齐标准 Cordis 子插件导出。
+- **有界预检、内存卫生与可观测性**：为 `editRecovery` 与 `edit_batch` 补齐 `stat` 大小预检及 `readBytes`/`streamText` 有界读取（`maxPreflightBytes`）并统一 CRLF 预检；清理 `readGuard`、`telemetry`、`DaemonPool` 与 `customPrompt`（`maxWatchedWorkspaces`）中的会话/缓存强引用泄漏；修复 `customPrompt` 的 `$DSH_HOME` 解析与多候选热重载；修正 `linesTruncated` 按行计数、在遥测摘要聚合 `editRecovery`/`contextCompaction`/`convergenceGuidance`，并补齐 HTTP 缓存诊断对无尾空行 SSE 尾帧的解析。
+- **精简契约与导出一致性**：彻底移除孤立的 `prompt-linter` 模块与 `experimentalReadRanges` 试点，对齐全部根/子路径 `.d.ts` 与运行时导出（含 `./read-guard` 补齐大纲导出），并新增全子路径导出契约自动测试。
 
 ---
 
@@ -44,8 +33,6 @@
   基于 `fs.watch` 深度监视提示词文件变更，修改保存后下一轮交互即刻生效，无需重启 DSH 守护进程。
 - **级联策略灵活可选**：
   支持 `concat`（全局与工作区级联合并，默认）与 `workspace-override`（项目级完全覆盖全局）。
-- **内置 Prompt Linter 健康度校验与一键修复**：
-  提供 `lintPrompt` / `fixPrompt` / `lintPromptFile` API。**基于用户当前预设加载的插件工具做动态客观判定**，杜绝主观臆断：当工具未在预设加载时提示冗余防守，当工具已加载却声明禁用时提示配置冲突，并校验弱语气词（如软性建议词自动升级为标准动词）、RFC 2119 强约束大写规范及未闭合反引号，输出健康度打分（0-100）并支持一键无损修复。
 
 | 指标维度 | 官方默认 System Prompt | 开启本插件优化后 | 收益 |
 | :--- | :--- | :--- | :--- |
@@ -60,7 +47,6 @@
   - `maxWindowLines: 120`：单次切片最多请求的行数，防止密集命中连锁合并为整文件读取。
   - `maxReadLines: 600`：单次调用累计请求行数上限，包含多个文件及窗口。
   - `readConcurrency: 3`：每批最多同时读取的窗口数；每批完成后重新核算输出空间，空间不足时停止后续读取。原生读取自身截断所隐藏的命中仍进入索引。
-  - `experimentalReadRanges: false`：本地宿主试点开关。宿主须显式提供 `{ version: 1 }` 的 `optimizerReadRanges` 能力，并为可执行的 `optimizer_read_ranges` 配置读取策略。该工具接收 `{ file_path, ranges: [{ offset, limit }] }`（2–8 个窗口），按入参顺序为每个窗口返回一个经策略批准的文本块。仅合并同一批中已获预算准入的窗口。能力缺失时逐窗调用原生 `read`，合批调用失败或被拒绝时直接报告。本地试点可在 DSH profile 补丁中用绝对路径加载 `scripts/local-read-ranges.mjs`，并在优化器配置中设置 `compositeTools.experimentalReadRanges: true`。适配器使用与宿主原生读取一致的上限，按工具名匹配 `read` 的策略也需覆盖 `optimizer_read_ranges`。
   - 窗口按尚未覆盖的正则数优先选择，再考虑重复模式的边际收益、行数成本及文件多样性；同分时按规范路径与行号稳定排序。`maxFiles` 限制实际选中的文件，不提前排除其他文件中的高价值窗口。
   - 以上是行数与输出字节上限，不代表底层读取字节数或 Token 的固定换算。
 - **`readGuard` 读取前检查**：
@@ -135,7 +121,7 @@ pnpm add dsh-awesome-optimizer
 
     # 或微调批处理大小
     compositeTools:
-      maxBatchFiles: 15
+      maxFiles: 8
       maxBatchEdits: 15
 
     # 或放宽无进展熔断阈值

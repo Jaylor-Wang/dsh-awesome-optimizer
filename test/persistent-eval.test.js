@@ -1,8 +1,9 @@
 import { test, describe, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import {
+import persistentEvalPlugin, {
   applyPersistentEval,
+  DaemonPool,
   EVAL_PYTHON_TOOL,
   EVAL_NODE_TOOL,
   formatEvalOutput,
@@ -543,5 +544,184 @@ fetched + globalThis.offset;
       /Startup abort/
     );
     slowRunner.destroy();
+  });
+
+  test('eval_python returns NaN and Infinity cleanly through StdioWorkerRunner without timing out', async () => {
+    const { ctx, registeredTools } = createMockContext();
+    serviceInstance = applyPersistentEval(ctx, { enabled: true, timeoutMs: 2000 });
+    const pyTool = registeredTools.get(EVAL_PYTHON_TOOL);
+    const session = { id: 'sess-py-nan' };
+
+    assert.equal(await pyTool.execute({ code: 'float("nan")' }, { session }), '=> nan');
+    assert.equal(await pyTool.execute({ code: 'float("inf")' }, { session }), '=> inf');
+    assert.equal(await pyTool.execute({ code: '1 + 1' }, { session }), '=> 2');
+  });
+
+  test('workers sanitize sensitive credential and DSH_* env vars by default with opt-out and explicit override', async t => {
+    const prev = {
+      DSH_INTERNAL_TEST: process.env.DSH_INTERNAL_TEST,
+      TEST_MOCK_API_KEY: process.env.TEST_MOCK_API_KEY,
+      TEST_SAFE_OPT_VAR: process.env.TEST_SAFE_OPT_VAR
+    };
+    process.env.DSH_INTERNAL_TEST = 'internal-dsh-secret';
+    process.env.TEST_MOCK_API_KEY = 'sk-test-secret';
+    process.env.TEST_SAFE_OPT_VAR = 'safe-visible-value';
+    t.after(() => {
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    });
+
+    const sanitizedPy = new StdioWorkerRunner({
+      command: 'python',
+      args: ['-u', PY_WORKER_SCRIPT],
+      env: { EXPLICIT_TOKEN_OVERRIDE: 'explicit-ok' }
+    });
+    const sanitizedNode = new StdioWorkerRunner({
+      command: 'node',
+      args: [NODE_WORKER_SCRIPT]
+    });
+    const unsanitizedNode = new StdioWorkerRunner({
+      command: 'node',
+      args: [NODE_WORKER_SCRIPT],
+      sanitizeEnv: false
+    });
+    t.after(() => {
+      sanitizedPy.destroy();
+      sanitizedNode.destroy();
+      unsanitizedNode.destroy();
+    });
+
+    const pyRes = await sanitizedPy.execute(
+      'import os; [os.environ.get("DSH_INTERNAL_TEST"), os.environ.get("TEST_MOCK_API_KEY"), os.environ.get("TEST_SAFE_OPT_VAR"), os.environ.get("EXPLICIT_TOKEN_OVERRIDE")]'
+    );
+    assert.equal(pyRes.success, true);
+    assert.deepEqual(pyRes.result, [null, null, 'safe-visible-value', 'explicit-ok']);
+
+    const nodeRes = await sanitizedNode.execute(
+      '[process.env.DSH_INTERNAL_TEST ?? null, process.env.TEST_MOCK_API_KEY ?? null, process.env.TEST_SAFE_OPT_VAR ?? null]'
+    );
+    assert.equal(nodeRes.success, true);
+    assert.deepEqual(nodeRes.result, [null, null, 'safe-visible-value']);
+
+    const rawNodeRes = await unsanitizedNode.execute(
+      '[process.env.DSH_INTERNAL_TEST ?? null, process.env.TEST_MOCK_API_KEY ?? null]'
+    );
+    assert.equal(rawNodeRes.success, true);
+    assert.deepEqual(rawNodeRes.result, ['internal-dsh-secret', 'sk-test-secret']);
+  });
+
+  test('requireShellTool gates eval_python and eval_node admission when bash is restricted away', async () => {
+    const host = await createTestRuntime();
+    try {
+      const restrictDispose = host.agent.ctx.tools.restrict({ deny: ['bash'] });
+      try {
+        const restrictedSet = await host.ctx.tools.resolve({
+          agent: host.agent,
+          signal: new AbortController().signal
+        });
+        try {
+          assert.equal(host.ctx.tools.executable('bash', host.agent, restrictedSet), undefined);
+          assert.equal(host.ctx.tools.executable(EVAL_PYTHON_TOOL, host.agent, restrictedSet), undefined);
+          assert.equal(host.ctx.tools.executable(EVAL_NODE_TOOL, host.agent, restrictedSet), undefined);
+        } finally {
+          restrictedSet.dispose();
+        }
+        await host.run('Check model tool list without bash');
+        const advertised = host.requests[0].tools.map(t => t.name);
+        assert.equal(advertised.includes('bash'), false);
+        assert.equal(advertised.includes(EVAL_PYTHON_TOOL), false);
+        assert.equal(advertised.includes(EVAL_NODE_TOOL), false);
+      } finally {
+        restrictDispose();
+      }
+    } finally {
+      await host.dispose();
+    }
+
+    const optOutHost = await createTestRuntime({
+      optimizerConfig: { persistentEval: { enabled: true, requireShellTool: false } }
+    });
+    try {
+      const restrictDispose = optOutHost.agent.ctx.tools.restrict({ deny: ['bash'] });
+      try {
+        const set = await optOutHost.ctx.tools.resolve({
+          agent: optOutHost.agent,
+          signal: new AbortController().signal
+        });
+        try {
+          assert.equal(optOutHost.ctx.tools.executable('bash', optOutHost.agent, set), undefined);
+          assert.ok(optOutHost.ctx.tools.executable(EVAL_PYTHON_TOOL, optOutHost.agent, set));
+          assert.ok(optOutHost.ctx.tools.executable(EVAL_NODE_TOOL, optOutHost.agent, set));
+        } finally {
+          set.dispose();
+        }
+      } finally {
+        restrictDispose();
+      }
+    } finally {
+      await optOutHost.dispose();
+    }
+  });
+
+  test('DaemonPool bounds primitive disposedKeys and tracks anonymous object sessions via WeakSet', () => {
+    const pool = new DaemonPool({ maxDisposedKeys: 3 });
+    try {
+      for (let i = 1; i <= 5; i++) {
+        pool.destroySession({ id: `s-${i}` });
+      }
+      assert.equal(pool.disposedKeys.size, 3);
+      assert.deepEqual([...pool.disposedKeys], ['s-3', 's-4', 's-5']);
+
+      const anonSession = {};
+      pool.destroySession(anonSession);
+      assert.equal(pool.disposedKeys.size, 3);
+      assert.throws(() => pool.getNodeRunner(anonSession), /Session workers have been destroyed/);
+      assert.equal(pool.reviveSession(anonSession), true);
+      assert.doesNotThrow(() => pool.getNodeRunner(anonSession));
+    } finally {
+      pool.destroyAll();
+    }
+    assert.equal(pool.disposedKeys.size, 0);
+  });
+
+  test('persistent-eval subpath exports a standard Cordis plugin interface', () => {
+    assert.equal(persistentEvalPlugin.name, 'agent-optimizer-persistent-eval');
+    assert.deepEqual(persistentEvalPlugin.inject, ['tools']);
+    const { ctx } = createMockContext();
+    let providedName = null;
+    let providedService = null;
+    ctx.provide = (k, v) => { providedName = k; providedService = v; };
+    persistentEvalPlugin.apply(ctx, { enabled: true });
+    assert.equal(providedName, 'persistentEval');
+    assert.ok(providedService?.pool instanceof DaemonPool);
+    providedService.destroy();
+  });
+
+  test('StdioWorkerRunner reports per-call timeoutMs accurately and real executionTimeMs on fast crash', async t => {
+    const pyRunner = new StdioWorkerRunner({
+      command: 'python',
+      args: ['-u', PY_WORKER_SCRIPT],
+      timeoutMs: 5000
+    });
+    const crashScript = "process.stdout.write(JSON.stringify({status:'ready',pid:process.pid}) + '\\n'); setTimeout(() => process.exit(9), 20);";
+    const crashRunner = new StdioWorkerRunner({
+      command: 'node',
+      args: ['-e', crashScript],
+      timeoutMs: 5000
+    });
+    t.after(() => {
+      pyRunner.destroy();
+      crashRunner.destroy();
+    });
+
+    const timeoutRes = await pyRunner.execute('while True: pass', { timeoutMs: 80 });
+    assert.equal(timeoutRes.success, false);
+    assert.match(timeoutRes.error, /Execution timed out after 80ms/);
+
+    const crashRes = await crashRunner.execute('ignored');
+    assert.equal(crashRes.success, false);
+    assert.ok(crashRes.executionTimeMs < 2000, `Expected real elapsed time < 2000ms, got ${crashRes.executionTimeMs}ms`);
   });
 });

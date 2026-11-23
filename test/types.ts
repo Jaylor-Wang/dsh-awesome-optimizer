@@ -9,11 +9,17 @@ import policyPlugin, { type RuntimePolicyOptions } from 'dsh-awesome-optimizer/p
 import mutationPlugin, { type FileMutationPolicyOptions } from 'dsh-awesome-optimizer/mutation-policy';
 import recoveryPlugin, { type FailureRecoveryOptions } from 'dsh-awesome-optimizer/recovery';
 import editRecoveryPlugin, { type EditRecoveryOptions, buildEditFailureHint } from 'dsh-awesome-optimizer/edit-recovery';
-import readGuardPlugin, { type ReadGuardOptions, formatCodeOutline } from 'dsh-awesome-optimizer/read-guard';
+import readGuardPlugin, { type ReadGuardOptions, extractCodeOutline, formatCodeOutline } from 'dsh-awesome-optimizer/read-guard';
 import compositePlugin, { type CompositeToolsOptions, FIND_AND_READ_TOOL, mergeMatchWindows } from 'dsh-awesome-optimizer/composite-tools';
 import convergencePlugin, { type ConvergenceOptions } from 'dsh-awesome-optimizer/convergence';
 import customPromptPlugin, { type CustomPromptOptions } from 'dsh-awesome-optimizer/custom-prompt';
-import { applyPersistentEval, type PersistentEvalOptions, type StdioWorkerExecuteOptions } from 'dsh-awesome-optimizer/persistent-eval';
+import persistentEvalPlugin, {
+  applyPersistentEval,
+  PY_WORKER_SCRIPT,
+  NODE_WORKER_SCRIPT,
+  type PersistentEvalOptions,
+  type StdioWorkerExecuteOptions
+} from 'dsh-awesome-optimizer/persistent-eval';
 import telemetryPlugin, { type TelemetryOptions } from 'dsh-awesome-optimizer/telemetry';
 const config: AgentOptimizerConfig = {
   enabled: true,
@@ -22,8 +28,8 @@ const config: AgentOptimizerConfig = {
   recoverFailedWrites: true,
   editRecovery: { enabled: true, contextLines: 6, maxSnippetLines: 20 },
   readGuard: { enabled: true, maxLineChars: 1500, injectTailOutline: true, maxOutlineEntries: 20, maxCacheEntries: 32, maxCacheBytes: 262144, astOutline: 'auto', astTimeoutMs: 750, astMaxOutputBytes: 262144, astGrepCommand: 'ast-grep' },
-  compositeTools: { enabled: true, findAndRead: true, maxPatterns: 5, defaultContextLines: 5, maxFiles: 5, maxWindows: 10, maxWindowLines: 120, maxReadLines: 600, readConcurrency: 3 },
-  persistentEval: { enabled: true, python: true, node: true, timeoutMs: 15000 },
+  compositeTools: { enabled: true, findAndRead: true, maxPatterns: 5, defaultContextLines: 5, maxFiles: 5, maxWindows: 10, maxWindowLines: 120, maxReadLines: 600, readConcurrency: 3, maxPreflightBytes: 2097152 },
+  persistentEval: { enabled: true, python: true, node: true, timeoutMs: 15000, sanitizeEnv: true, requireShellTool: true },
   convergence: { enabled: true, injectGuidance: true, softStepBudget: 8 },
   customPrompt: { enabled: true, placement: 'replace-all', includeCliFacts: false },
   telemetry: { enabled: true, trackStreams: true }
@@ -36,6 +42,7 @@ const plugins: Plugin[] = [
   editRecoveryPlugin,
   readGuardPlugin,
   compositePlugin,
+  persistentEvalPlugin,
   convergencePlugin,
   customPromptPlugin,
   telemetryPlugin
@@ -78,7 +85,7 @@ const subConfigs: [
   { maxPatterns: 5, defaultContextLines: 5, maxFiles: 5, maxWindows: 10, maxLineChars: 1500, maxTotalBytes: 24576, maxWindowLines: 120, maxReadLines: 600, readConcurrency: 3, atomicEdits: true },
   { pythonCommand: 'python3', timeoutMs: 5000 },
   { softStepBudget: 6 },
-  { placement: 'replace-all', includeCliFacts: true, extraEnvironmentFacts: ['- Custom fact'] },
+  { placement: 'replace-all', includeCliFacts: true, extraEnvironmentFacts: ['- Custom fact'], maxWatchedWorkspaces: 16 },
   { trackStreams: true, onTurnSummary(summary) {
     const rate: number | null | undefined = summary.readGuard?.outlineCacheHitRate;
     const counts: number[] | null = summary.readGuard && [
@@ -88,10 +95,16 @@ const subConfigs: [
     ];
     const cacheRead: number | null = summary.usage.cacheReadTokens;
     const coverage: number = summary.cacheUsageCoverage.readReported;
+    const editHints: number | undefined = summary.editRecovery?.hintsAttached;
+    const compactions: number | undefined = summary.contextCompaction?.pressureCompactions;
+    const reminders: number | undefined = summary.convergenceGuidance?.remindersSent;
     void rate;
     void counts;
     void cacheRead;
     void coverage;
+    void editHints;
+    void compactions;
+    void reminders;
   } }
 ];
 
@@ -104,7 +117,10 @@ const workerExecOptions: StdioWorkerExecuteOptions = {
 };
 
 void applyPersistentEval;
+void PY_WORKER_SCRIPT;
+void NODE_WORKER_SCRIPT;
 void buildEditFailureHint('a\nb', 'c', { filePath: 'x.ts' });
+void extractCodeOutline('export function demo() {}', { filePath: 'demo.ts' });
 void formatCodeOutline('export function demo() {}', { filePath: 'demo.ts' });
 void mergeMatchWindows([10, 12], 5);
 void FIND_AND_READ_TOOL;

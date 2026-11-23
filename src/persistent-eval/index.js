@@ -12,7 +12,9 @@ export const PersistentEvalConfig = z.object({
   node: z.boolean().default(true),
   pythonCommand: z.string(),
   timeoutMs: z.number().step(1).min(50).max(120000).default(15000),
-  maxOutputBytes: z.number().step(1).min(64).max(65536).default(8192)
+  maxOutputBytes: z.number().step(1).min(64).max(65536).default(8192),
+  sanitizeEnv: z.boolean().default(true),
+  requireShellTool: z.boolean().default(true)
 });
 
 /**
@@ -75,33 +77,53 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
   const pool = new DaemonPool({
     pythonCommand: config.pythonCommand,
     timeoutMs: config.timeoutMs,
-    maxOutputBytes: config.maxOutputBytes
+    maxOutputBytes: config.maxOutputBytes,
+    sanitizeEnv: config.sanitizeEnv
   });
 
   const workingDirectories = new Map();
+  let objectWorkingDirectories = new WeakMap();
   let disposed = false;
   const sessionKey = session => session?.id || session || '__global__';
+  const isObjectKey = key => key !== null && (typeof key === 'object' || typeof key === 'function');
+  const getCachedCwd = key => (isObjectKey(key) ? objectWorkingDirectories.get(key) : workingDirectories.get(key));
+  const hasCachedCwd = key => (isObjectKey(key) ? objectWorkingDirectories.has(key) : workingDirectories.has(key));
+  const setCachedCwd = (key, cwd) => {
+    if (isObjectKey(key)) objectWorkingDirectories.set(key, cwd);
+    else workingDirectories.set(key, cwd);
+  };
+  const deleteCachedCwd = key => {
+    if (isObjectKey(key)) objectWorkingDirectories.delete(key);
+    else workingDirectories.delete(key);
+  };
   function getWorkingDirectory(session) {
     const key = sessionKey(session);
-    if (!workingDirectories.has(key)) {
+    if (!hasCachedCwd(key)) {
       const service = typeof ctx.get === 'function' ? ctx.get('workingDirectory') : ctx.workingDirectory;
       const cwd = service?.get?.(session);
-      if (cwd !== undefined) workingDirectories.set(key, cwd);
+      if (cwd !== undefined) setCachedCwd(key, cwd);
     }
-    return workingDirectories.get(key);
+    return getCachedCwd(key);
   }
   function destroySession(session) {
-    workingDirectories.delete(sessionKey(session));
+    deleteCachedCwd(sessionKey(session));
     pool.destroySession(session);
   }
   function destroy() {
     if (disposed) return;
     disposed = true;
     workingDirectories.clear();
+    objectWorkingDirectories = new WeakMap();
     pool.destroyAll();
   }
+  function canPrewarm() {
+    if (!config.requireShellTool) return true;
+    // On real DSH ToolsService hosts, skip spawning idle workers when bash is not registered globally.
+    if (typeof ctx.tools?.executable === 'function' && ctx.tools.get('bash') === undefined) return false;
+    return true;
+  }
   function prewarmSession(session) {
-    if (disposed) return;
+    if (disposed || !canPrewarm()) return;
     void pool.prewarm(session, { python: config.python, node: config.node });
   }
 
@@ -114,7 +136,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
       pool.reviveSession(session);
       prewarmSession(session);
     } else if (event?.type === 'working-directory/change') {
-      workingDirectories.set(sessionKey(session), event.data.cwd);
+      setCachedCwd(sessionKey(session), event.data.cwd);
     } else if (event?.type === 'turn/start') {
       prewarmSession(session);
     }
@@ -125,6 +147,10 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
   if (typeof ctx.effect === 'function') {
     ctx.effect(() => destroy);
   }
+
+  const registrationOptions = config.requireShellTool
+    ? { when: ({ agent }) => ctx.tools.get('bash', agent) !== undefined }
+    : undefined;
 
   if (config.python) {
     ctx.tools.register({
@@ -173,7 +199,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
         });
         return formatEvalOutput(response);
       }
-    });
+    }, registrationOptions);
   }
 
   if (config.node) {
@@ -222,7 +248,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
         });
         return formatEvalOutput(response);
       }
-    });
+    }, registrationOptions);
   }
 
   return {
@@ -235,3 +261,12 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
     destroy
   };
 }
+
+export const name = 'agent-optimizer-persistent-eval';
+export const inject = ['tools'];
+export const Config = PersistentEvalConfig;
+export function apply(ctx, config = {}) {
+  const service = applyPersistentEval(ctx, config);
+  if (service) ctx.provide('persistentEval', service);
+}
+export default { name, inject, Config, apply };

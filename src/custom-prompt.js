@@ -20,6 +20,7 @@ export const CustomPromptConfig = z.object({
   sectionName: z.string().default(SECTION_NAME),
   mergeStrategy: z.union(['concat', 'workspace-override', 'global-only', 'workspace-only']).default('concat'),
   hotReload: z.boolean().default(true),
+  maxWatchedWorkspaces: z.number().step(1).min(1).max(256).default(32),
   interpolate: z.boolean().default(false),
   injectEnvironmentFacts: z.boolean().default(true),
   includeCliFacts: z.boolean().default(true),
@@ -96,9 +97,12 @@ export function resolveDshHome(env = process.env) {
 
 /**
  * Resolve the global SYSTEM.md path.
+ * Honors `$DSH_HOME` when using the default `~/.dsh/SYSTEM.md` location.
  */
 export function resolveGlobalPath(filePath, env = process.env) {
-  if (!filePath) return path.join(resolveDshHome(env), 'SYSTEM.md');
+  if (!filePath || filePath === '~/.dsh/SYSTEM.md' || filePath === '~\\.dsh\\SYSTEM.md') {
+    return path.join(resolveDshHome(env), 'SYSTEM.md');
+  }
   if (filePath.startsWith('~/') || filePath.startsWith('~\\')) {
     return path.join(os.homedir(), filePath.slice(2));
   }
@@ -106,6 +110,14 @@ export function resolveGlobalPath(filePath, env = process.env) {
     return path.join(os.homedir(), filePath.slice(1));
   }
   return path.resolve(filePath);
+}
+
+function resolveWorkspaceCandidates(workspaceRoot, relativeOrPath = '.dsh/SYSTEM.md') {
+  if (!workspaceRoot || typeof workspaceRoot !== 'string') return [];
+  if (path.isAbsolute(relativeOrPath)) return [relativeOrPath];
+  const primary = path.resolve(workspaceRoot, relativeOrPath);
+  const fallback = path.resolve(workspaceRoot, 'SYSTEM.md');
+  return primary === fallback ? [primary] : [primary, fallback];
 }
 
 /**
@@ -154,12 +166,51 @@ export class CustomPromptManager {
     this.cachedGlobal = null;
     this.cachedWorkspace = new Map();
     this.watchers = new Map();
+    this.workspaceWatchKeys = new Map();
     this.debounceTimers = new Map();
     this.disposed = false;
 
     this.loadGlobal();
     if (this.config.hotReload) {
       this.watchPath(this.globalFilePath, () => this.loadGlobal());
+    }
+  }
+
+  _trackWatchKey(ownerWorkspace, key) {
+    if (!ownerWorkspace) return;
+    let set = this.workspaceWatchKeys.get(ownerWorkspace);
+    if (!set) {
+      set = new Set();
+      this.workspaceWatchKeys.set(ownerWorkspace, set);
+    }
+    set.add(key);
+  }
+
+  _closeWatchKey(key) {
+    const timer = this.debounceTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.debounceTimers.delete(key);
+    }
+    const watcher = this.watchers.get(key);
+    if (watcher) {
+      try { watcher.close(); } catch (_err) {}
+      this.watchers.delete(key);
+    }
+  }
+
+  _setWorkspaceCache(workspaceRoot, content) {
+    this.cachedWorkspace.delete(workspaceRoot);
+    this.cachedWorkspace.set(workspaceRoot, content);
+    const limit = this.config.maxWatchedWorkspaces ?? 32;
+    while (this.cachedWorkspace.size > limit) {
+      const oldest = this.cachedWorkspace.keys().next().value;
+      this.cachedWorkspace.delete(oldest);
+      const keys = this.workspaceWatchKeys.get(oldest);
+      if (keys) {
+        for (const key of keys) this._closeWatchKey(key);
+        this.workspaceWatchKeys.delete(oldest);
+      }
     }
   }
 
@@ -179,72 +230,87 @@ export class CustomPromptManager {
     if (!workspaceRoot) return null;
     try {
       const wsPath = resolveWorkspacePath(workspaceRoot, this.config.workspaceFile);
-      if (wsPath && fs.existsSync(wsPath)) {
-        const content = fs.readFileSync(wsPath, 'utf8').trim();
-        this.cachedWorkspace.set(workspaceRoot, content);
-        if (this.config.hotReload && !this.watchers.has(wsPath)) {
-          this.watchPath(wsPath, () => {
-            this.loadWorkspace(workspaceRoot);
-          });
+      const content = wsPath && fs.existsSync(wsPath)
+        ? fs.readFileSync(wsPath, 'utf8').trim()
+        : null;
+      this._setWorkspaceCache(workspaceRoot, content);
+      if (this.config.hotReload) {
+        for (const candidate of resolveWorkspaceCandidates(workspaceRoot, this.config.workspaceFile)) {
+          this.watchPath(candidate, () => this.loadWorkspace(workspaceRoot), workspaceRoot);
         }
-        return content;
       }
-      this.cachedWorkspace.set(workspaceRoot, null);
-      // Even if file doesn't exist yet, watch the directory so creation triggers load
-      if (this.config.hotReload && wsPath && !this.watchers.has(wsPath)) {
-        this.watchPath(wsPath, () => {
-          this.loadWorkspace(workspaceRoot);
-        });
-      }
-      return null;
+      return content;
     } catch (_err) {
-      this.cachedWorkspace.set(workspaceRoot, null);
+      this._setWorkspaceCache(workspaceRoot, null);
       return null;
     }
   }
 
-  watchPath(targetPath, onChange) {
-    if (!targetPath || this.disposed || this.watchers.has(targetPath)) return;
+  _scheduleChange(debounceKey, onChange) {
+    clearTimeout(this.debounceTimers.get(debounceKey));
+    const timer = setTimeout(() => {
+      this.debounceTimers.delete(debounceKey);
+      if (this.disposed) return;
+      onChange();
+    }, 50);
+    timer.unref?.();
+    this.debounceTimers.set(debounceKey, timer);
+  }
+
+  watchPath(targetPath, onChange, ownerWorkspace = null) {
+    if (!targetPath || this.disposed) return;
     try {
       const dir = path.dirname(targetPath);
       const filename = path.basename(targetPath);
       const isWin = process.platform === 'win32';
       const matchesName = (a, b) => (isWin ? a.toLowerCase() === b.toLowerCase() : a === b);
+      const fileKey = `file:${targetPath}`;
+      const parentKey = `dir:${dir}`;
 
-      if (!fs.existsSync(dir)) {
-        // Watch nearest existing parent directory (e.g. workspace root before .dsh/ exists)
-        const parentDir = path.dirname(dir);
-        const subDirName = path.basename(dir);
-        if (!fs.existsSync(parentDir) || this.watchers.has(dir)) return;
-        const parentWatcher = fs.watch(parentDir, { persistent: false }, (_eventType, triggerName) => {
-          if (!triggerName || matchesName(triggerName, subDirName)) {
-            if (fs.existsSync(dir)) {
-              try { parentWatcher.close(); } catch {}
-              this.watchers.delete(dir);
-              this.watchPath(targetPath, onChange);
-              onChange();
+      // Keep a parent watcher for nested subdirectories (e.g. .dsh/) so deletion + recreation re-attaches cleanly.
+      const parentDir = path.dirname(dir);
+      const subDirName = path.basename(dir);
+      if (parentDir !== dir && fs.existsSync(parentDir) && !this.watchers.has(parentKey)) {
+        const shouldWatchParent = !fs.existsSync(dir) || (ownerWorkspace && path.resolve(dir) !== path.resolve(ownerWorkspace));
+        if (shouldWatchParent) {
+          const parentWatcher = fs.watch(parentDir, { persistent: false }, (_eventType, triggerName) => {
+            if (this.disposed) return;
+            if (!triggerName || matchesName(triggerName, subDirName)) {
+              if (fs.existsSync(dir)) {
+                if (!this.watchers.has(fileKey)) {
+                  this.watchPath(targetPath, onChange, ownerWorkspace);
+                }
+                this._scheduleChange(fileKey, onChange);
+              } else if (this.watchers.has(fileKey)) {
+                this._closeWatchKey(fileKey);
+                this._scheduleChange(fileKey, onChange);
+              }
             }
-          }
-        });
-        parentWatcher.on('error', () => {});
-        this.watchers.set(dir, parentWatcher);
-        return;
+          });
+          parentWatcher.on('error', () => {});
+          this.watchers.set(parentKey, parentWatcher);
+          this._trackWatchKey(ownerWorkspace, parentKey);
+        }
       }
 
+      if (!fs.existsSync(dir) || this.watchers.has(fileKey)) return;
+
       const watcher = fs.watch(dir, { persistent: false }, (_eventType, triggerName) => {
+        if (this.disposed) return;
+        if (!fs.existsSync(dir)) {
+          this._closeWatchKey(fileKey);
+          this._scheduleChange(fileKey, onChange);
+          return;
+        }
         if (!triggerName || matchesName(triggerName, filename)) {
-          clearTimeout(this.debounceTimers.get(targetPath));
-          this.debounceTimers.set(
-            targetPath,
-            setTimeout(() => {
-              if (this.disposed) return;
-              onChange();
-            }, 50)
-          );
+          this._scheduleChange(fileKey, onChange);
         }
       });
-      watcher.on('error', () => {});
-      this.watchers.set(targetPath, watcher);
+      watcher.on('error', () => {
+        if (!fs.existsSync(dir)) this._closeWatchKey(fileKey);
+      });
+      this.watchers.set(fileKey, watcher);
+      this._trackWatchKey(ownerWorkspace, fileKey);
     } catch (_err) {
       // Non-fatal
     }
@@ -258,6 +324,10 @@ export class CustomPromptManager {
     if (!workspaceRoot) return '';
     if (!this.cachedWorkspace.has(workspaceRoot)) {
       this.loadWorkspace(workspaceRoot);
+    } else {
+      const value = this.cachedWorkspace.get(workspaceRoot);
+      this.cachedWorkspace.delete(workspaceRoot);
+      this.cachedWorkspace.set(workspaceRoot, value);
     }
     return this.cachedWorkspace.get(workspaceRoot) || '';
   }
@@ -282,7 +352,7 @@ export class CustomPromptManager {
 
   reload() {
     this.loadGlobal();
-    for (const wsRoot of this.cachedWorkspace.keys()) {
+    for (const wsRoot of [...this.cachedWorkspace.keys()]) {
       this.loadWorkspace(wsRoot);
     }
   }
@@ -299,6 +369,7 @@ export class CustomPromptManager {
       } catch (_err) {}
     }
     this.watchers.clear();
+    this.workspaceWatchKeys.clear();
     this.cachedWorkspace.clear();
   }
 }
@@ -329,7 +400,25 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
   ctx.on('system-prompt/assemble', (assembly, context) => {
     const wsRoot = resolveWorkspaceRoot(ctx, context);
     const customText = manager.getEffectivePrompt(wsRoot);
-    if (!customText) return assembly;
+    const buildEnvFacts = () => ({
+      name: ENVIRONMENT_FACTS_SECTION,
+      text: formatEnvironmentFacts(process, detectPythonEnv, {
+        includeCliFacts: config.includeCliFacts,
+        extraFacts: config.extraEnvironmentFacts
+      }),
+      interpolate: false
+    });
+
+    if (!customText) {
+      // Never strip official sections without a custom SYSTEM.md, but still honor injectEnvironmentFacts.
+      if (!config.injectEnvironmentFacts || assembly.sections.some(s => s.name === ENVIRONMENT_FACTS_SECTION)) {
+        return assembly;
+      }
+      return {
+        ...assembly,
+        sections: [...assembly.sections, buildEnvFacts()]
+      };
+    }
 
     if (config.placement === 'replace-all') {
       // Retain optimizer's own sections (e.g. convergence guidance) while stripping all other sections
@@ -344,14 +433,7 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
         }
       ];
       if (config.injectEnvironmentFacts) {
-        sections.push({
-          name: ENVIRONMENT_FACTS_SECTION,
-          text: formatEnvironmentFacts(process, detectPythonEnv, {
-            includeCliFacts: config.includeCliFacts,
-            extraFacts: config.extraEnvironmentFacts
-          }),
-          interpolate: false
-        });
+        sections.push(buildEnvFacts());
       }
       sections.push(...optimizerSections);
       return {
@@ -375,14 +457,7 @@ export function applyCustomPrompt(ctx, rawConfig = {}) {
       }
     }
     if (config.injectEnvironmentFacts && !sections.some(s => s.name === ENVIRONMENT_FACTS_SECTION)) {
-      sections.push({
-        name: ENVIRONMENT_FACTS_SECTION,
-        text: formatEnvironmentFacts(process, detectPythonEnv, {
-          includeCliFacts: config.includeCliFacts,
-          extraFacts: config.extraEnvironmentFacts
-        }),
-        interpolate: false
-      });
+      sections.push(buildEnvFacts());
     }
     return { ...assembly, sections };
   });

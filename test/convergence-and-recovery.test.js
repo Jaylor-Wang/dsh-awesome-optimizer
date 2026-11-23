@@ -1,7 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createTestRuntime, call } from './support/runtime.js';
-import { CONVERGENCE_SOURCE, PAIRING_ERROR } from '../src/index.js';
+import { CONVERGENCE_SOURCE, PAIRING_ERROR, REMINDER } from '../src/index.js';
+
+function findReminderTriggerSteps(requests) {
+  const triggerSteps = [];
+  let seen = 0;
+  for (let i = 0; i < requests.length; i++) {
+    const count = requests[i].messages.filter(m =>
+      m.role === 'user'
+      && Array.isArray(m.content)
+      && m.content.some(b => b.type === 'text' && b.text === REMINDER)
+    ).length;
+    if (count > seen) {
+      triggerSteps.push(i + 1);
+      seen = count;
+    }
+  }
+  return triggerSteps;
+}
 
 test('convergence guidance injects one-time soft step budget notice without hard-stopping the turn', async () => {
   const host = await createTestRuntime({
@@ -34,11 +51,12 @@ test('convergence guidance injects one-time soft step budget notice without hard
     assert.match(firstRequestText, /For searches across multiple source files that need matching code and surrounding context, use find_and_read/);
     assert.match(firstRequestText, /For known files, batch independent read calls in parallel/);
 
-    // Periodic reminder injected at step 2 and step 4
+    // Periodic reminder injected at exact steps 2 and 4
     const reminders = host.events.filter(
       e => e.type === 'user/message' && e.data.source?.kind === CONVERGENCE_SOURCE
     );
     assert.equal(reminders.length, 2);
+    assert.deepEqual(findReminderTriggerSteps(host.requests), [2, 4]);
     assert.match(reminders[0].data.content[0].text, /Batch remaining actions; conclude only if criteria are met; NEVER omit verification\./);
 
     const endEvent = host.events.filter(e => e.type === 'turn/end').at(-1);
@@ -89,8 +107,9 @@ test('convergence guidance injects periodic micro-directive, caps at maxReminder
     const reminders = host.events.filter(
       e => e.type === 'user/message' && e.data.source?.kind === CONVERGENCE_SOURCE
     );
-    // Injected exactly twice (capped at maxRemindersPerTurn = 2)
+    // Step 1 error suppresses only step 2; reminders fire at exact steps 3 and 4, then cap at maxRemindersPerTurn = 2
     assert.equal(reminders.length, 2);
+    assert.deepEqual(findReminderTriggerSteps(host.requests), [3, 4]);
     for (const r of reminders) {
       assert.match(r.data.content[0].text, /Batch remaining actions; conclude only if criteria are met; NEVER omit verification\./);
     }

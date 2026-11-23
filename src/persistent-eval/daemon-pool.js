@@ -16,11 +16,16 @@ export class DaemonPool {
    * @param {object} config
    * @param {number} [config.timeoutMs=15000]
    * @param {number} [config.maxOutputBytes=8192]
+   * @param {boolean} [config.sanitizeEnv=true]
+   * @param {number} [config.maxDisposedKeys=1024]
    */
   constructor(config = {}) {
     this.config = config;
     this.runnersBySession = new Map();
     this.disposedKeys = new Set();
+    this.disposedObjects = new WeakSet();
+    const rawLimit = config.maxDisposedKeys;
+    this.maxDisposedKeys = Number.isInteger(rawLimit) && rawLimit > 0 ? rawLimit : 1024;
     this.isDestroyed = false;
   }
 
@@ -29,14 +34,42 @@ export class DaemonPool {
     return session.id || session;
   }
 
+  _isKeyObject(key) {
+    return key !== null && (typeof key === 'object' || typeof key === 'function');
+  }
+
+  _isDisposedKey(key) {
+    return this._isKeyObject(key) ? this.disposedObjects.has(key) : this.disposedKeys.has(key);
+  }
+
+  _markDisposedKey(key) {
+    if (this._isKeyObject(key)) {
+      this.disposedObjects.add(key);
+      return;
+    }
+    this.disposedKeys.delete(key);
+    this.disposedKeys.add(key);
+    while (this.disposedKeys.size > this.maxDisposedKeys) {
+      this.disposedKeys.delete(this.disposedKeys.values().next().value);
+    }
+  }
+
+  _clearDisposedKey(key) {
+    if (this._isKeyObject(key)) {
+      this.disposedObjects.delete(key);
+    } else {
+      this.disposedKeys.delete(key);
+    }
+  }
+
   _assertSessionActive(key) {
     if (this.isDestroyed) throw new Error('Daemon pool has been destroyed.');
-    if (this.disposedKeys.has(key)) throw new Error('Session workers have been destroyed.');
+    if (this._isDisposedKey(key)) throw new Error('Session workers have been destroyed.');
   }
 
   reviveSession(session) {
     if (this.isDestroyed) return false;
-    this.disposedKeys.delete(this._getKey(session));
+    this._clearDisposedKey(this._getKey(session));
     return true;
   }
 
@@ -55,7 +88,8 @@ export class DaemonPool {
         command: pythonBin,
         args: ['-u', PY_WORKER_SCRIPT],
         timeoutMs: this.config.timeoutMs,
-        maxOutputBytes: this.config.maxOutputBytes
+        maxOutputBytes: this.config.maxOutputBytes,
+        sanitizeEnv: this.config.sanitizeEnv
       });
     }
 
@@ -76,7 +110,8 @@ export class DaemonPool {
         command: 'node',
         args: [NODE_WORKER_SCRIPT],
         timeoutMs: this.config.timeoutMs,
-        maxOutputBytes: this.config.maxOutputBytes
+        maxOutputBytes: this.config.maxOutputBytes,
+        sanitizeEnv: this.config.sanitizeEnv
       });
     }
 
@@ -93,7 +128,7 @@ export class DaemonPool {
    */
   async prewarm(session, { python = true, node = true } = {}) {
     const key = this._getKey(session);
-    if (this.isDestroyed || this.disposedKeys.has(key)) return;
+    if (this.isDestroyed || this._isDisposedKey(key)) return;
     const promises = [];
     if (python) {
       try {
@@ -116,7 +151,7 @@ export class DaemonPool {
 
   destroySession(session) {
     const key = this._getKey(session);
-    this.disposedKeys.add(key);
+    this._markDisposedKey(key);
     const sessionMap = this.runnersBySession.get(key);
     if (!sessionMap) return;
 
@@ -132,11 +167,11 @@ export class DaemonPool {
   destroyAll() {
     if (this.isDestroyed) return;
     this.isDestroyed = true;
-    for (const [key, sessionMap] of this.runnersBySession.entries()) {
+    for (const sessionMap of this.runnersBySession.values()) {
       if (sessionMap.python) sessionMap.python.destroy();
       if (sessionMap.node) sessionMap.node.destroy();
-      this.disposedKeys.add(key);
     }
     this.runnersBySession.clear();
+    this.disposedKeys.clear();
   }
 }

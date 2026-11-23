@@ -3,8 +3,11 @@ import type z from '@deepseek-ai/schemastery';
 import type { RuntimePolicySummary } from './runtime-policy.d.ts';
 import type { FileMutationPolicySummary } from './file-mutation-policy.d.ts';
 import type { FailureRecoveryStats } from './failure-recovery.d.ts';
+import type { EditRecoveryStats } from './edit-recovery.d.ts';
 import type { CompositeToolsStats } from './composite-tools.d.ts';
 import type { ReadGuardStats } from './read-guard.d.ts';
+import type { ContextCompactionStats } from './context-compaction.d.ts';
+import type { ConvergenceSummary } from './convergence.d.ts';
 
 export interface TelemetryOptions {
   enabled?: boolean;
@@ -50,8 +53,11 @@ export interface TurnTelemetrySummary {
   runtimePolicy: RuntimePolicySummary | null;
   fileMutationPolicy: FileMutationPolicySummary | null;
   failureRecovery: FailureRecoveryStats | null;
+  editRecovery: EditRecoveryStats | null;
   compositeTools: CompositeToolsStats | null;
   readGuard: ReadGuardStats | null;
+  contextCompaction: ContextCompactionStats | null;
+  convergenceGuidance: ConvergenceSummary | null;
 }
 
 export interface TurnComparisonDelta {

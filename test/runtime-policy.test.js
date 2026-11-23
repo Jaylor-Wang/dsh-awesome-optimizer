@@ -277,3 +277,87 @@ test('runtimePolicy isolates nested find_and_read sub-calls and guards flagged i
     await host.dispose();
   }
 });
+
+test('runtimePolicy handles tricky shell quoting, heredocs, playwright flags, and avoids cross-segment false positives', async () => {
+  const host = await createTestRuntime({
+    optimizerConfig: { runtimePolicy: { mode: 'enforce' } },
+    script: [
+      // Quoted double-quotes inside single quotes must not swallow `&& npm publish`
+      [call('q-bypass', 'bash', { command: `echo '"' && npm publish && echo '"'` })],
+      // POSIX single quotes do not escape backslash before closing quote
+      [call('win-sq', 'bash', { command: `echo 'C:\\foo\\' && npm publish` })],
+      // || and newline chaining of npm publish
+      [call('or-pub', 'bash', { command: 'git status || npm publish' })],
+      [call('nl-pub', 'bash', { command: 'git status\nnpm publish' })],
+      // Non-cat heredoc payload
+      [call('tee-heredoc', 'bash', { command: `tee out.txt <<EOF\n${'x'.repeat(300)}\nEOF` })],
+      // Flagged playwright-cli open file://
+      [call('pw-flag', 'bash', { command: 'playwright-cli --session=s1 open file:///tmp/index.html' })],
+      // Safe cross-segment and quoted playwright-cli commands must NOT false-positive
+      [call('pw-safe-echo', 'bash', { command: 'echo "playwright-cli open file:///tmp/index.html" && playwright-cli snapshot' })],
+      [call('pw-safe-eval', 'bash', { command: `playwright-cli eval "console.log('open file:///tmp/a')"` })],
+      [{ type: 'text', text: 'Done.' }]
+    ]
+  });
+
+  try {
+    await host.run('Test hardened shell parser');
+    assert.deepEqual(host.calls.map(c => c.id), ['pw-safe-echo', 'pw-safe-eval']);
+    assert.equal(host.runtimePolicy.getSummary(host.agent.session).shellPayloadBlocks, 6);
+  } finally {
+    await host.dispose();
+  }
+});
+
+test('runtimePolicy blocks alternating read-only failure loops and resets after mutating progress', async () => {
+  const host = await createTestRuntime({
+    files: { 'ok.txt': 'ok' },
+    optimizerConfig: { runtimePolicy: { mode: 'enforce', noProgressLimit: 2 } },
+    script: [
+      [call('f1', 'read', { file_path: 'missing.txt' })],
+      [call('ok1', 'read', { file_path: 'ok.txt' })],
+      [call('f2', 'read', { file_path: 'missing.txt' })],
+      [call('ok2', 'read', { file_path: 'ok.txt' })],
+      // 3rd identical failure despite intervening read-only calls -> blocked!
+      [call('f3-blocked', 'read', { file_path: 'missing.txt' })],
+      // Mutating tool creates the missing file -> resets circuit breaker
+      [call('w-fix', 'write', { file_path: 'missing.txt', content: 'fixed!' })],
+      [call('r-after-fix', 'read', { file_path: 'missing.txt' })],
+      [{ type: 'text', text: 'Recovered after mutation.' }]
+    ]
+  });
+
+  try {
+    await host.run('Alternating failure loop with recovery');
+    assert.deepEqual(host.calls.map(c => c.id), ['f1', 'ok1', 'f2', 'ok2', 'w-fix', 'r-after-fix']);
+    const results = host.events.filter(e => e.type === 'tool/result');
+    assert.match(results[4].data.message.content.map(b => b.text).join(''), /NO_PROGRESS/);
+    assert.equal(results[6].data.message.isError, false);
+  } finally {
+    await host.dispose();
+  }
+});
+
+test('runtimePolicy and fileMutationPolicy hydrate initial session workingDirectory on the first turn', async () => {
+  const host = await createTestRuntime({
+    workingDirectory: 'E:\\Workspace\\ProjectA',
+    files: { 'E:/Workspace/ProjectA/existing.ts': 'export const v = 1;\n' },
+    optimizerConfig: {
+      runtimePolicy: { mode: 'enforce', noProgressLimit: 2 },
+      fileMutationPolicy: { mode: 'enforce', minLargeWriteBytes: 64 }
+    },
+    script: [
+      [call('w-rel', 'write', { file_path: 'existing.ts', content: 'X'.repeat(100) })],
+      [{ type: 'text', text: 'Done.' }]
+    ]
+  });
+
+  try {
+    await host.run('Check initial cwd hydration');
+    const mutationSummary = host.fileMutationPolicy.getSummary(host.agent.session);
+    assert.equal(mutationSummary.largeWritesBlocked, 1);
+    assert.equal(host.calls.filter(c => c.name === 'write').length, 0);
+  } finally {
+    await host.dispose();
+  }
+});

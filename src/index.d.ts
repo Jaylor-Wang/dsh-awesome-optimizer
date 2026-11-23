@@ -41,18 +41,24 @@ export declare const Config: z<AgentOptimizerConfig>;
 export declare function apply(ctx: Context, config?: AgentOptimizerConfig): void;
 
 export {
+  applyRuntimePolicy,
+  RuntimePolicyConfig,
   RuntimePolicyManager,
   POLICY_SOURCE,
   type RuntimePolicyOptions,
   type RuntimePolicySummary
 } from './runtime-policy.d.ts';
 export {
+  applyFileMutationPolicy,
+  FileMutationPolicyConfig,
   FileMutationPolicyManager,
   MUTATION_SOURCE,
   type FileMutationPolicyOptions,
   type FileMutationPolicySummary
 } from './file-mutation-policy.d.ts';
 export {
+  applyFailureRecovery,
+  FailureRecoveryConfig,
   RecoveryRecord,
   RECOVERY_SOURCE,
   RETRY_TOOL,
@@ -86,6 +92,8 @@ export {
   type OutlineEntry
 } from './read-guard.d.ts';
 export {
+  applyCompositeTools,
+  CompositeToolsConfig,
   FIND_AND_READ_TOOL,
   EDIT_BATCH_TOOL,
   parseGrepOutput,
@@ -97,6 +105,8 @@ export {
   type MergedMatchWindow
 } from './composite-tools.d.ts';
 export {
+  applyConvergence,
+  ConvergenceConfig,
   SOURCE as CONVERGENCE_SOURCE,
   GUIDANCE,
   REMINDER,
@@ -106,6 +116,7 @@ export {
 } from './convergence.d.ts';
 export {
   CustomPromptManager,
+  CustomPromptConfig,
   applyCustomPrompt,
   SECTION_NAME as CUSTOM_PROMPT_SECTION,
   ENVIRONMENT_FACTS_SECTION,
@@ -118,6 +129,8 @@ export {
   type PlacementMode
 } from './custom-prompt.d.ts';
 export {
+  applyTelemetry,
+  TelemetryConfig,
   AgentTelemetryManager,
   compareTurnSummaries,
   type TelemetryOptions,
@@ -142,15 +155,6 @@ export {
   StdioWorkerRunner,
   DaemonPool
 } from './persistent-eval/index.d.ts';
-export {
-  lintPrompt,
-  fixPrompt,
-  lintPromptFile,
-  RULE_IDS as PROMPT_LINT_RULES,
-  type PromptLintStats,
-  type PromptLintIssue,
-  type PromptLintResult
-} from './prompt-linter.d.ts';
 
 declare const plugin: { name: typeof name; inject: typeof inject; Config: typeof Config; apply: typeof apply };
 export default plugin;

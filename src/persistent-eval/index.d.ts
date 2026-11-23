@@ -1,8 +1,10 @@
-import { Context } from '@deepseek-ai/cordis';
-import z from '@deepseek-ai/schemastery';
+import type { Context } from '@deepseek-ai/cordis';
+import type z from '@deepseek-ai/schemastery';
 
-export const EVAL_PYTHON_TOOL: 'eval_python';
-export const EVAL_NODE_TOOL: 'eval_node';
+export declare const EVAL_PYTHON_TOOL: 'eval_python';
+export declare const EVAL_NODE_TOOL: 'eval_node';
+export declare const PY_WORKER_SCRIPT: string;
+export declare const NODE_WORKER_SCRIPT: string;
 
 export interface PersistentEvalOptions {
   /** Default: true. Set false to disable local workers that run outside the DSH sandbox. */
@@ -13,6 +15,10 @@ export interface PersistentEvalOptions {
   /** Deadline for each worker startup and execution phase. Defaults to 15,000 ms. */
   timeoutMs?: number;
   maxOutputBytes?: number;
+  /** Strip sensitive credential and DSH_* variables from inherited worker env. Default: true. */
+  sanitizeEnv?: boolean;
+  /** Admit eval tools only when the host agent has `bash` admitted. Default: true. */
+  requireShellTool?: boolean;
 }
 
 export declare const PersistentEvalConfig: z<PersistentEvalOptions>;
@@ -43,6 +49,7 @@ export interface StdioWorkerRunnerOptions {
   timeoutMs?: number;
   maxOutputBytes?: number;
   env?: Record<string, string | undefined>;
+  sanitizeEnv?: boolean;
 }
 
 export interface StdioWorkerExecuteOptions {
@@ -58,6 +65,8 @@ export interface DaemonPoolConfig {
   pythonCommand?: string;
   timeoutMs?: number;
   maxOutputBytes?: number;
+  sanitizeEnv?: boolean;
+  maxDisposedKeys?: number;
 }
 
 export declare class StdioWorkerRunner {
@@ -72,6 +81,7 @@ export declare class StdioWorkerRunner {
 
 export declare class DaemonPool {
   constructor(config?: DaemonPoolConfig);
+  reviveSession(session?: unknown): boolean;
   prewarm(session?: unknown, options?: { python?: boolean; node?: boolean }): Promise<void>;
   getPythonRunner(session?: unknown): StdioWorkerRunner;
   getNodeRunner(session?: unknown): StdioWorkerRunner;
@@ -83,3 +93,10 @@ export declare function applyPersistentEval(
   ctx: Context,
   rawConfig?: PersistentEvalOptions
 ): PersistentEvalService | null;
+
+export declare const name: string;
+export declare const inject: string[];
+export declare const Config: z<PersistentEvalOptions>;
+export declare function apply(ctx: Context, config?: PersistentEvalOptions): void;
+declare const plugin: { name: typeof name; inject: typeof inject; Config: typeof Config; apply: typeof apply };
+export default plugin;

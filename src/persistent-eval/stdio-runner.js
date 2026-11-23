@@ -3,6 +3,23 @@ import readline from 'node:readline';
 import process from 'node:process';
 
 const OUTPUT_TRUNCATION_SUFFIX = '\n\n[Output truncated: output exceeded the configured byte limit.]';
+const SENSITIVE_ENV_RE = /(?:KEY|PASSWORD|PASSWD|SECRET|TOKEN|CREDENTIAL|AUTH)/i;
+const HOST_INTERNAL_ENV_RE = /^DSH_/i;
+
+function buildWorkerEnv(baseEnv, overrides = {}, sanitizeEnv = true) {
+  const inherited = {};
+  for (const [name, value] of Object.entries(baseEnv || {})) {
+    if (value === undefined) continue;
+    if (sanitizeEnv && (SENSITIVE_ENV_RE.test(name) || HOST_INTERNAL_ENV_RE.test(name))) continue;
+    inherited[name] = value;
+  }
+  return {
+    ...inherited,
+    PYTHONUNBUFFERED: '1',
+    PYTHONIOENCODING: 'utf-8',
+    ...overrides
+  };
+}
 
 function byteLength(value) {
   return Buffer.byteLength(value, 'utf8');
@@ -64,6 +81,7 @@ export class StdioWorkerRunner {
     this.timeoutMs = options.timeoutMs ?? 15000;
     this.maxOutputBytes = options.maxOutputBytes ?? 8192;
     this.env = options.env || {};
+    this.sanitizeEnv = options.sanitizeEnv !== false;
 
     this.child = null;
     this.rl = null;
@@ -74,6 +92,7 @@ export class StdioWorkerRunner {
     this.readyWaiters = [];
     this.startupTimer = null;
     this.launchCount = 0;
+    this._draining = false;
   }
 
   _ref() {
@@ -143,12 +162,7 @@ export class StdioWorkerRunner {
     this.isReady = false;
 
     try {
-      const mergedEnv = {
-        ...process.env,
-        PYTHONUNBUFFERED: '1',
-        PYTHONIOENCODING: 'utf-8',
-        ...this.env
-      };
+      const mergedEnv = buildWorkerEnv(process.env, this.env, this.sanitizeEnv);
 
       const child = spawn(this.command, this.args, {
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -235,6 +249,10 @@ export class StdioWorkerRunner {
       clearTimeout(task.timeoutTimer);
       task.timeoutTimer = null;
     }
+    if (task.watchdogKillTimer) {
+      clearTimeout(task.watchdogKillTimer);
+      task.watchdogKillTimer = null;
+    }
     if (task.abortCleanup) {
       task.abortCleanup();
       task.abortCleanup = null;
@@ -291,16 +309,20 @@ export class StdioWorkerRunner {
       const task = this.currentTask;
       this.currentTask = null;
       this._cleanupTask(task);
+      const effectiveTimeout = task.effectiveTimeout ?? this.timeoutMs;
+      const elapsedMs = task.startedAt !== undefined
+        ? Math.round(Math.max(0, performance.now() - task.startedAt) * 1000) / 1000
+        : effectiveTimeout;
 
       task.resolve({
         id: task.id,
         success: false,
         error: task.killedByWatchdog
-          ? `Execution timed out after ${this.timeoutMs}ms. Worker process was terminated and will be restarted cleanly.`
+          ? `Execution timed out after ${effectiveTimeout}ms. Worker process was terminated and will be restarted cleanly.`
           : `Worker process exited unexpectedly (code: ${code}, signal: ${signal}).`,
         stdout: '',
         stderr: task.stderrChunk || '',
-        executionTimeMs: this.timeoutMs
+        executionTimeMs: elapsedMs
       });
     }
 
@@ -401,7 +423,7 @@ export class StdioWorkerRunner {
   }
 
   async _drainQueue() {
-    if (this.currentTask || this.isDestroyed) {
+    if (this._draining || this.currentTask || this.isDestroyed) {
       return;
     }
 
@@ -410,50 +432,80 @@ export class StdioWorkerRunner {
       return;
     }
 
-    this._ref();
+    this._draining = true;
+    try {
+      this._ref();
 
-    // Ensure child process is healthy and ready before pulling tasks from queue
-    if (!this.child || !this.isReady) {
-      try {
-        await this.ensureStarted();
-      } catch (err) {
-        const task = this.pendingQueue.shift();
-        if (task) {
-          task.reject(err);
+      // Ensure child process is healthy and ready before pulling tasks from queue
+      if (!this.child || !this.isReady) {
+        try {
+          await this.ensureStarted();
+        } catch (err) {
+          const task = this.pendingQueue.shift();
+          if (task) {
+            task.reject(err);
+          }
+          return;
         }
-        this._drainQueue();
+      }
+
+      if (this.currentTask || this.pendingQueue.length === 0 || this.isDestroyed || !this.child) {
+        if (this.pendingQueue.length === 0) this._unref();
         return;
       }
-    }
 
-    if (this.currentTask || this.pendingQueue.length === 0 || this.isDestroyed || !this.child) {
-      if (this.pendingQueue.length === 0) this._unref();
-      return;
-    }
+      const task = this.pendingQueue.shift();
+      if (task.options?.signal?.aborted) {
+        task.reject(toAbortError(task.options.signal));
+        return;
+      }
+      this.currentTask = task;
 
-    const task = this.pendingQueue.shift();
-    if (task.options?.signal?.aborted) {
-      task.reject(toAbortError(task.options.signal));
-      this._drainQueue();
-      return;
-    }
-    this.currentTask = task;
+      // Armed watchdog timer
+      const effectiveTimeout = task.options?.timeoutMs ?? this.timeoutMs;
+      task.effectiveTimeout = effectiveTimeout;
+      task.startedAt = performance.now();
+      task.timeoutTimer = setTimeout(() => {
+        task.killedByWatchdog = true;
+        const dyingChild = this.child;
+        this._forceKill(dyingChild);
+        // Fallback in case the OS never emits exit after forced kill.
+        task.watchdogKillTimer = setTimeout(() => {
+          if (this.currentTask !== task) return;
+          this.currentTask = null;
+          this.isReady = false;
+          if (this.child === dyingChild) this.child = null;
+          if (this.rl) {
+            try { this.rl.close(); } catch {}
+            this.rl = null;
+          }
+          this._cleanupTask(task);
+          task.resolve({
+            id: task.id,
+            success: false,
+            error: `Execution timed out after ${effectiveTimeout}ms. Worker process was terminated and will be restarted cleanly.`,
+            stdout: '',
+            stderr: task.stderrChunk || '',
+            executionTimeMs: Math.round(Math.max(0, performance.now() - task.startedAt) * 1000) / 1000
+          });
+          this._drainQueue();
+        }, 500);
+        task.watchdogKillTimer.unref?.();
+      }, effectiveTimeout);
 
-    // Armed watchdog timer
-    const effectiveTimeout = task.options?.timeoutMs ?? this.timeoutMs;
-    task.timeoutTimer = setTimeout(() => {
-      task.killedByWatchdog = true;
-      this._forceKill();
-    }, effectiveTimeout);
-
-    try {
-      const line = JSON.stringify(task.payload) + '\n';
-      this.child.stdin.write(line, 'utf-8');
-    } catch (err) {
-      this.currentTask = null;
-      this._cleanupTask(task);
-      task.reject(err);
-      this._drainQueue();
+      try {
+        const line = JSON.stringify(task.payload) + '\n';
+        this.child.stdin.write(line, 'utf-8');
+      } catch (err) {
+        this.currentTask = null;
+        this._cleanupTask(task);
+        task.reject(err);
+      }
+    } finally {
+      this._draining = false;
+      if (!this.currentTask && this.pendingQueue.length > 0 && !this.isDestroyed) {
+        void this._drainQueue();
+      }
     }
   }
 

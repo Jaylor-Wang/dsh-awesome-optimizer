@@ -65,20 +65,32 @@ export class FileMutationPolicyManager {
     };
   }
 
+  #resolveCwd(session, fallback = '') {
+    if (fallback) return fallback;
+    try {
+      const cwd = this.workingDirectory?.get?.(session);
+      return typeof cwd === 'string' ? cwd : '';
+    } catch {
+      return '';
+    }
+  }
+
   stateFor(session, turn) {
     if (!session) return null;
     let state = this.sessionStates.get(session);
     const targetTurn = turn ?? state?.turn ?? 1;
     if (!state || state.turn !== targetTurn) {
-      state = this.#createTurnState(targetTurn, state?.cwd ?? '');
+      state = this.#createTurnState(targetTurn, this.#resolveCwd(session, state?.cwd ?? ''));
       this.sessionStates.set(session, state);
+    } else if (!state.cwd) {
+      state.cwd = this.#resolveCwd(session);
     }
     return state;
   }
 
   onTurnStart(session, turn) {
     const existing = this.sessionStates.get(session);
-    this.sessionStates.set(session, this.#createTurnState(turn, existing?.cwd ?? ''));
+    this.sessionStates.set(session, this.#createTurnState(turn, this.#resolveCwd(session, existing?.cwd ?? '')));
   }
 
   onTurnEnd(session) {
@@ -257,6 +269,8 @@ export function applyFileMutationPolicy(ctx, rawConfig = {}) {
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (!exec.agent) return next();
+    const effectiveWd = (ctx.get ? ctx.get('workingDirectory') : undefined) ?? manager.workingDirectory;
+    if (effectiveWd && !manager.workingDirectory) manager.workingDirectory = effectiveWd;
     const effectiveFs = (ctx.get ? ctx.get('fs') : undefined) ?? manager.fsService;
     const decision = await manager.evaluateToolExecution(exec.agent.session, exec, ctx.tools, effectiveFs);
     if (!decision.allowed) {

@@ -136,3 +136,22 @@ test('readGuard truncates oversized single lines and injects tail outline on tru
     await host.dispose();
   }
 });
+
+test('readGuard linesTruncated counts each truncated line rather than each text block', async () => {
+  const multiLong = `${'A'.repeat(200)}\nshort\n${'B'.repeat(200)}\n${'C'.repeat(200)}`;
+  const host = await createTestRuntime({
+    optimizerConfig: { readGuard: { enabled: true, maxLineChars: 100, injectTailOutline: false } },
+    files: { 'multi.txt': multiLong },
+    script: [
+      [call('r-multi', 'read', { file_path: 'multi.txt' })],
+      [{ type: 'text', text: 'Done.' }]
+    ]
+  });
+  try {
+    await host.run('Read multi-long-line file');
+    const stats = host.readGuard.getStats(host.agent.session);
+    assert.equal(stats.linesTruncated, 3);
+  } finally {
+    await host.dispose();
+  }
+});

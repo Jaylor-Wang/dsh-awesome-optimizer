@@ -1,10 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import z from '@deepseek-ai/schemastery';
-import { formatOutlineEntries, supportsCodeOutline } from './code-outline.js';
+import { extractCodeOutline, formatCodeOutline, formatOutlineEntries, supportsCodeOutline } from './code-outline.js';
 import { buildAdaptiveOutline } from './ast-outline.js';
 import { OutlineCache } from './outline-cache.js';
 
+export { extractCodeOutline, formatCodeOutline };
 export const READ_GUARD_SOURCE = 'optimizer-read-guard';
 
 export const ReadGuardConfig = z.object({
@@ -22,16 +23,22 @@ export const ReadGuardConfig = z.object({
   astMaxOutputBytes: z.number().step(1).min(1024).max(1024 * 1024).default(256 * 1024)
 });
 
-export function truncateLongLines(text, maxLineChars = 1500) {
-  if (typeof text !== 'string' || !maxLineChars || maxLineChars <= 0) return text;
+function truncateLongLinesWithCount(text, maxLineChars = 1500) {
+  if (typeof text !== 'string' || !maxLineChars || maxLineChars <= 0) {
+    return { text, truncatedCount: 0 };
+  }
   const lines = text.split('\n');
-  let modified = false;
+  let truncatedCount = 0;
   const out = lines.map(line => {
     if (line.length <= maxLineChars) return line;
-    modified = true;
+    truncatedCount++;
     return `${line.slice(0, maxLineChars)}... [line truncated: +${line.length - maxLineChars} chars]`;
   });
-  return modified ? out.join('\n') : text;
+  return truncatedCount > 0 ? { text: out.join('\n'), truncatedCount } : { text, truncatedCount: 0 };
+}
+
+export function truncateLongLines(text, maxLineChars = 1500) {
+  return truncateLongLinesWithCount(text, maxLineChars).text;
 }
 
 function splitEnvelope(text) {
@@ -169,10 +176,19 @@ export function applyReadGuard(ctx, rawConfig = {}) {
   let disposed = false;
   const anonymousSession = {};
   const localBackend = {};
-  const allCaches = new Set();
+  const liveCacheRefs = new Set();
+  const cacheRefByInstance = new WeakMap();
+  const cacheFinalizer = new FinalizationRegistry(ref => {
+    liveCacheRefs.delete(ref);
+  });
   const clearCaches = session => {
     const caches = cachesBySession.get(session ?? anonymousSession);
-    for (const cache of caches?.values() ?? []) { cache.clear(); allCaches.delete(cache); }
+    for (const cache of caches?.values() ?? []) {
+      cache.clear();
+      cacheFinalizer.unregister(cache);
+      const ref = cacheRefByInstance.get(cache);
+      if (ref) liveCacheRefs.delete(ref);
+    }
     cachesBySession.delete(session ?? anonymousSession);
     return Boolean(caches?.size);
   };
@@ -187,14 +203,23 @@ export function applyReadGuard(ctx, rawConfig = {}) {
     if (!cache) {
       cache = new OutlineCache(config.maxCacheEntries, config.maxCacheBytes);
       caches.set(backend ?? localBackend, cache);
-      allCaches.add(cache);
+      const ref = new WeakRef(cache);
+      cacheRefByInstance.set(cache, ref);
+      liveCacheRefs.add(ref);
+      cacheFinalizer.register(cache, ref, cache);
     }
     return cache;
   };
   ctx.on('dispose', () => {
     disposed = true;
-    for (const cache of allCaches) cache.clear();
-    allCaches.clear();
+    for (const ref of liveCacheRefs) {
+      const cache = ref.deref();
+      if (cache) {
+        cache.clear();
+        cacheFinalizer.unregister(cache);
+      }
+    }
+    liveCacheRefs.clear();
   });
   const statsFor = session => {
     if (disposed || !session || disposedSessions.has(session)) return null;
@@ -253,11 +278,11 @@ export function applyReadGuard(ctx, rawConfig = {}) {
       const block = updatedBlocks[i];
       if (block.type !== 'text' || typeof block.text !== 'string') continue;
       const { prefix, body, suffix } = splitEnvelope(block.text);
-      const truncatedBody = truncateLongLines(body, config.maxLineChars);
-      if (truncatedBody !== body) {
+      const { text: truncatedBody, truncatedCount } = truncateLongLinesWithCount(body, config.maxLineChars);
+      if (truncatedCount > 0) {
         block.text = `${prefix}${truncatedBody}${suffix}`;
         changed = true;
-        if (stats) stats.linesTruncated++;
+        if (stats) stats.linesTruncated += truncatedCount;
       }
     }
 
@@ -276,16 +301,18 @@ export function applyReadGuard(ctx, rawConfig = {}) {
           } catch {
             cwd = '';
           }
-          const fsService = (() => {
-            try {
-              return ctx.get('fs');
-            } catch {
-              // An unavailable/denied service is not permission to bypass it.
-              return {};
-            }
-          })();
+          let fsService;
+          let fsUnavailable = false;
+          try {
+            fsService = ctx.get('fs');
+          } catch {
+            // An unavailable/denied service is not permission to bypass it.
+            fsUnavailable = true;
+          }
 
-          const parsed = await readTargetSafely(args.file_path, cwd, fsService, exec.signal, config, cacheFor(session, fsService), stats);
+          const parsed = fsUnavailable
+            ? null
+            : await readTargetSafely(args.file_path, cwd, fsService, exec.signal, config, cacheFor(session, fsService), stats);
           if (parsed !== null && !exec.signal?.aborted && !disposed && !(session && disposedSessions.has(session))) {
             const { totalLines } = parsed;
             if (totalLines > trunc.endLine) {
@@ -317,7 +344,7 @@ export function applyReadGuard(ctx, rawConfig = {}) {
 
   return {
     getStats(session) {
-      const stats = statsFor(session) ?? emptyStats();
+      const stats = (!disposed && session && !disposedSessions.has(session) ? statsBySession.get(session) : null) ?? emptyStats();
       return {
         ...stats,
         outlineCacheHitRate: stats.outlineCacheLookups ? stats.outlineCacheHits / stats.outlineCacheLookups : null

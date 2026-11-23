@@ -4,7 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createTestRuntime } from './support/runtime.js';
-import { CUSTOM_PROMPT_SECTION, detectPythonEnv, resetPythonCacheForTesting, formatEnvironmentFacts } from '../src/index.js';
+import {
+  CUSTOM_PROMPT_SECTION,
+  CustomPromptManager,
+  detectPythonEnv,
+  resetPythonCacheForTesting,
+  formatEnvironmentFacts
+} from '../src/index.js';
+import { resolveGlobalPath } from '../src/custom-prompt.js';
 
 function extractPromptText(request) {
   if (!request) return '';
@@ -312,6 +319,88 @@ test('customPrompt hot-reloads workspace .dsh/SYSTEM.md even when .dsh directory
 
     await host.run('Turn 2');
     assert.match(extractPromptText(host.requests[1]), /DEFERRED_WS_PROMPT/);
+  } finally {
+    await host.dispose();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('customPrompt honors DSH_HOME for default globalFile, watches all workspace candidates, bounds watched workspaces, and injects env facts without SYSTEM.md', async () => {
+  // 1. DSH_HOME respected for default ~/.dsh/SYSTEM.md
+  const customHome = path.resolve(os.tmpdir(), 'custom-dsh-home-env');
+  assert.equal(
+    resolveGlobalPath('~/.dsh/SYSTEM.md', { DSH_HOME: customHome }),
+    path.join(customHome, 'SYSTEM.md')
+  );
+
+  // 2. Multi-candidate workspace hot-reload (root SYSTEM.md -> .dsh/SYSTEM.md -> delete & recreate .dsh/)
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-custom-multi-cand-'));
+  const wsDir = path.join(tempDir, 'ws');
+  const ws2Dir = path.join(tempDir, 'ws2');
+  const ws3Dir = path.join(tempDir, 'ws3');
+  const missingGlobal = path.join(tempDir, 'no-global-SYSTEM.md');
+  fs.mkdirSync(wsDir, { recursive: true });
+  fs.mkdirSync(ws2Dir, { recursive: true });
+  fs.mkdirSync(ws3Dir, { recursive: true });
+
+  const manager = new CustomPromptManager({
+    globalFile: missingGlobal,
+    workspaceFile: '.dsh/SYSTEM.md',
+    hotReload: true,
+    maxWatchedWorkspaces: 2
+  });
+
+  try {
+    assert.equal(manager.getWorkspacePrompt(wsDir), '');
+    // Create fallback root SYSTEM.md
+    fs.writeFileSync(path.join(wsDir, 'SYSTEM.md'), 'ROOT_FALLBACK_V1', 'utf8');
+    await new Promise(r => setTimeout(r, 140));
+    assert.equal(manager.getWorkspacePrompt(wsDir), 'ROOT_FALLBACK_V1');
+
+    // Create higher-priority .dsh/SYSTEM.md -> must switch automatically
+    fs.mkdirSync(path.join(wsDir, '.dsh'), { recursive: true });
+    fs.writeFileSync(path.join(wsDir, '.dsh/SYSTEM.md'), 'DOT_DSH_PRIORITY_V2', 'utf8');
+    await new Promise(r => setTimeout(r, 140));
+    assert.equal(manager.getWorkspacePrompt(wsDir), 'DOT_DSH_PRIORITY_V2');
+
+    // Delete and recreate .dsh/ -> watcher must recover
+    fs.rmSync(path.join(wsDir, '.dsh'), { recursive: true, force: true });
+    await new Promise(r => setTimeout(r, 140));
+    assert.equal(manager.getWorkspacePrompt(wsDir), 'ROOT_FALLBACK_V1');
+    fs.mkdirSync(path.join(wsDir, '.dsh'), { recursive: true });
+    fs.writeFileSync(path.join(wsDir, '.dsh/SYSTEM.md'), 'RECREATED_DSH_V3', 'utf8');
+    await new Promise(r => setTimeout(r, 140));
+    assert.equal(manager.getWorkspacePrompt(wsDir), 'RECREATED_DSH_V3');
+
+    // 3. maxWatchedWorkspaces=2 evicts oldest workspace cache and watchers
+    manager.getWorkspacePrompt(ws2Dir);
+    manager.getWorkspacePrompt(ws3Dir);
+    assert.equal(manager.cachedWorkspace.size, 2);
+    assert.equal(manager.cachedWorkspace.has(wsDir), false);
+    assert.equal(manager.workspaceWatchKeys.has(wsDir), false);
+  } finally {
+    manager.dispose();
+  }
+
+  // 4. injectEnvironmentFacts=true works even when no SYSTEM.md exists without stripping official persona
+  const host = await createTestRuntime({
+    workingDirectory: ws2Dir,
+    optimizerConfig: {
+      customPrompt: {
+        enabled: true,
+        globalFile: missingGlobal,
+        placement: 'replace-all',
+        injectEnvironmentFacts: true,
+        hotReload: false
+      }
+    },
+    script: [[{ type: 'text', text: 'Done.' }]]
+  });
+  try {
+    await host.run('Verify env facts without SYSTEM.md');
+    const promptText = extractPromptText(host.requests[0]);
+    assert.match(promptText, /Complete the task accurately\./);
+    assert.match(promptText, /Host Environment & Tooling Facts/);
   } finally {
     await host.dispose();
     fs.rmSync(tempDir, { recursive: true, force: true });

@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createTestRuntime, call } from './support/runtime.js';
-import { applyReadGuard } from '../src/read-guard.js';
+import { applyReadGuard, extractCodeOutline, formatCodeOutline } from '../src/read-guard.js';
+import { OutlineCache } from '../src/outline-cache.js';
 
 const tailContent = 'head\nexport function hiddenTail() {}';
 const truncated = '<content>\n1: head\n\n(Showing lines 1-1 of 2. Use offset=2 to continue.)\n</content>';
@@ -185,4 +186,51 @@ test('readGuard preflights legacy readText and never reads a known oversized fil
     assert.equal(counters.readText, 0);
     assert.equal(output, truncated);
   });
+});
+
+test('readGuard subpath exports code outline helpers, keeps getStats side-effect-free, and never leaks caches when ctx.get("fs") throws', async t => {
+  assert.equal(typeof extractCodeOutline, 'function');
+  assert.equal(typeof formatCodeOutline, 'function');
+  assert.match(formatCodeOutline('export function ping() {}\n', { filePath: 'demo.ts' }), /export function ping/);
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-read-guard-fs-throw-'));
+  const target = path.join(tempDir, 'secret.ts');
+  fs.writeFileSync(target, tailContent, 'utf8');
+
+  const cleared = [];
+  const originalClear = OutlineCache.prototype.clear;
+  t.mock.method(OutlineCache.prototype, 'clear', function () {
+    originalClear.call(this);
+    cleared.push(this);
+  });
+
+  const hooks = new Map();
+  const session = {};
+  const unseenSession = {};
+  const guard = applyReadGuard({
+    on(name, callback) { hooks.set(name, callback); },
+    get(name) {
+      if (name === 'fs') throw new Error('fs service unavailable');
+      return undefined;
+    }
+  });
+  try {
+    // Querying stats on an unseen session must not throw or leave side effects
+    const initial = guard.getStats(unseenSession);
+    assert.equal(initial.inspected, 0);
+    assert.equal(initial.outlineCacheHitRate, null);
+
+    for (let i = 0; i < 10; i++) {
+      const decision = await hooks.get('tools/post-execute')(
+        { name: 'read', arguments: { file_path: target }, agent: { session } },
+        { content: [{ type: 'text', text: truncated }] },
+        async () => undefined
+      );
+      assert.equal(decision, undefined);
+    }
+    hooks.get('dispose')();
+    assert.equal(cleared.length, 0);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });

@@ -95,7 +95,10 @@ test('HTTP diagnostics enforce byte limits per SSE event regardless of chunk bou
     // Split inside UTF-8 and between CR and LF in the SSE separator.
     { bytes: coalesced, cuts: [20, splitAt - 1, coalesced.length - 1], expected: 17 },
     { bytes: over, cuts: [max - 4, max + 1], expected: null },
-    { bytes: crOnly, cuts: [crOnly.length - 1], expected: 17 }
+    { bytes: crOnly, cuts: [crOnly.length - 1], expected: 17 },
+    // Trailing SSE event without a final blank line before EOF must still be observed on flush().
+    { bytes: encoder.encode('data: {"usage":{"prompt_tokens":23}}'), cuts: [], expected: 23 },
+    { bytes: encoder.encode('data: {"usage":{"prompt_tokens":29}}\n'), cuts: [], expected: 29 }
   ];
   const records = [];
   let chunks;

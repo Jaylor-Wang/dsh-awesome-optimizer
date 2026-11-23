@@ -20,6 +20,8 @@ export interface CustomPromptOptions {
   sectionName?: string;
   mergeStrategy?: MergeStrategy;
   hotReload?: boolean;
+  /** Maximum workspace prompt directories cached and watched simultaneously. Default: 32. */
+  maxWatchedWorkspaces?: number;
   interpolate?: boolean;
   injectEnvironmentFacts?: boolean;
   includeCliFacts?: boolean;

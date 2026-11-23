@@ -187,12 +187,13 @@ export function findBestEditMatch(content, oldString, options = {}) {
     maxPossibleLineWeight += weight;
     if (!hits || hits.length > 64) continue;
     for (const fileIdx of hits) {
-      const candidateStart = Math.max(0, fileIdx - qOffset);
+      // Preserve signed offset so unrelated negative alignments do not collide at line 0.
+      const candidateStart = fileIdx - qOffset;
       candidateScores.set(candidateStart, (candidateScores.get(candidateStart) ?? 0) + weight);
     }
   }
 
-  let bestStart = -1;
+  let bestStart = null;
   let bestLineScore = 0;
   for (const [start, score] of candidateScores.entries()) {
     const normalized = maxPossibleLineWeight > 0 ? score / maxPossibleLineWeight : 0;
@@ -202,11 +203,12 @@ export function findBestEditMatch(content, oldString, options = {}) {
     }
   }
 
-  if (bestLineScore >= 0.34 && bestStart >= 0) {
+  if (bestLineScore >= 0.34 && bestStart !== null) {
+    const clampedStart = Math.max(0, bestStart);
     return {
       kind: 'fuzzy-match',
-      startLine: bestStart + 1,
-      endLine: Math.min(contentLines.length, bestStart + qLen),
+      startLine: clampedStart + 1,
+      endLine: Math.min(contentLines.length, Math.max(clampedStart + 1, bestStart + qLen)),
       score: bestLineScore,
       notes: indentNotes,
       totalLines: contentLines.length
@@ -320,13 +322,45 @@ function clampWindowToLineBudget(startLine, endLine, totalLines, contextLines, m
   return { from, to };
 }
 
+function clipUtf8ToBytes(text, maxBytes) {
+  if (maxBytes <= 0) return '';
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+  const buf = Buffer.from(text, 'utf8');
+  let end = Math.min(maxBytes, buf.length);
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
+  return buf.subarray(0, end).toString('utf8');
+}
+
 function trimToMaxBytes(text, maxBytes) {
   if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
-  const lines = text.split('\n');
-  while (lines.length > 3 && Buffer.byteLength(lines.join('\n'), 'utf8') > maxBytes) {
-    lines.pop();
+  if (maxBytes <= 0) return '';
+  let suffix = `\n... [context truncated at ${maxBytes} bytes]`;
+  if (Buffer.byteLength(suffix, 'utf8') >= maxBytes) {
+    suffix = '\n... [truncated]';
   }
-  return `${lines.join('\n')}\n... [context truncated at ${maxBytes} bytes]`;
+  const suffixBytes = Buffer.byteLength(suffix, 'utf8');
+  if (suffixBytes >= maxBytes) {
+    return clipUtf8ToBytes(text, maxBytes);
+  }
+  const budget = maxBytes - suffixBytes;
+  const lines = text.split('\n');
+  const kept = [];
+  let used = 0;
+  for (const line of lines) {
+    const lineBytes = Buffer.byteLength(line, 'utf8');
+    const sep = kept.length > 0 ? 1 : 0;
+    if (used + sep + lineBytes <= budget) {
+      kept.push(line);
+      used += sep + lineBytes;
+    } else {
+      break;
+    }
+  }
+  if (kept.length === 0) {
+    const clippedFirst = clipUtf8ToBytes(lines[0] ?? '', budget);
+    return clippedFirst ? `${clippedFirst}${suffix}` : clipUtf8ToBytes(text, maxBytes);
+  }
+  return `${kept.join('\n')}${suffix}`;
 }
 
 /**
@@ -382,27 +416,103 @@ export function buildEditFailureHint(content, oldString, options = {}) {
   return trimToMaxBytes(hint, maxHintBytes);
 }
 
+const UNAVAILABLE_FS = Object.freeze({});
+
+async function readBoundedLocalFile(resolvedPath, signal, maxBytes) {
+  let handle;
+  try {
+    handle = await fs.open(resolvedPath, 'r');
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > maxBytes || signal?.aborted) return null;
+    const chunks = [];
+    let size = 0;
+    const chunkSize = Math.min(65536, Math.max(stat.size + 1, 4096));
+    while (size <= maxBytes) {
+      if (signal?.aborted) return null;
+      const toRead = Math.min(chunkSize, maxBytes + 1 - size);
+      const buf = Buffer.allocUnsafe(toRead);
+      const { bytesRead } = await handle.read(buf, 0, toRead, null);
+      if (!bytesRead) break;
+      size += bytesRead;
+      if (size > maxBytes) return null;
+      chunks.push(bytesRead === buf.length ? buf : buf.subarray(0, bytesRead));
+    }
+    if (signal?.aborted || size > maxBytes) return null;
+    return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size));
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 async function readTargetForRecovery(filePath, cwd, fsService, signal, maxInspectBytes) {
-  if (!filePath || typeof filePath !== 'string') return null;
+  if (!filePath || typeof filePath !== 'string' || signal?.aborted) return null;
 
   if (fsService) {
     // A service failure is authoritative; never bypass sandbox or cancellation through local disk.
+    let target;
+    if (typeof fsService.resolve === 'function') {
+      try {
+        target = await fsService.resolve(filePath, { cwd, signal });
+      } catch {
+        return null;
+      }
+      if (signal?.aborted) return null;
+      if (typeof fsService.stat === 'function') {
+        try {
+          const info = await fsService.stat(target, signal);
+          if (signal?.aborted) return null;
+          if (info !== undefined) {
+            if (info.type !== undefined && info.type !== 'file') return null;
+            if (Number.isFinite(info.size) && (info.size < 0 || info.size > maxInspectBytes)) return null;
+          }
+        } catch {
+          return null;
+        }
+      }
+    }
+
+    if (typeof fsService.readBytes === 'function') {
+      try {
+        const bytes = await fsService.readBytes(target ?? filePath, signal, maxInspectBytes);
+        if (signal?.aborted || !bytes || bytes.byteLength > maxInspectBytes) return null;
+        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      } catch {
+        return null;
+      }
+    }
+
+    if (typeof fsService.streamText === 'function') {
+      try {
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of await fsService.streamText(target ?? filePath, signal)) {
+          if (signal?.aborted || typeof chunk !== 'string') return null;
+          size += Buffer.byteLength(chunk, 'utf8');
+          if (size > maxInspectBytes) return null;
+          chunks.push(chunk);
+        }
+        return chunks.join('');
+      } catch {
+        return null;
+      }
+    }
+
     if (typeof fsService.readFile === 'function') {
       try {
         const content = await fsService.readFile(filePath, { cwd, signal, encoding: 'utf8' });
-        if (typeof content !== 'string') return null;
+        if (signal?.aborted || typeof content !== 'string') return null;
         return Buffer.byteLength(content, 'utf8') <= maxInspectBytes ? content : null;
       } catch {
         return null;
       }
     }
+
     if (typeof fsService.readText === 'function') {
       try {
-        const target = typeof fsService.resolve === 'function'
-          ? await fsService.resolve(filePath, { cwd, signal })
-          : filePath;
-        const content = await fsService.readText(target, signal);
-        if (typeof content !== 'string') return null;
+        const content = await fsService.readText(target ?? filePath, signal);
+        if (signal?.aborted || typeof content !== 'string') return null;
         return Buffer.byteLength(content, 'utf8') <= maxInspectBytes ? content : null;
       } catch {
         return null;
@@ -412,14 +522,8 @@ async function readTargetForRecovery(filePath, cwd, fsService, signal, maxInspec
   }
 
   // Standalone hosts without an fs service may use a bounded local inspection.
-  try {
-    const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
-    const stat = await fs.stat(resolved);
-    if (!stat.isFile() || stat.size > maxInspectBytes) return null;
-    return await fs.readFile(resolved, 'utf8');
-  } catch {
-    return null;
-  }
+  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
+  return readBoundedLocalFile(resolved, signal, maxInspectBytes);
 }
 
 /**
@@ -475,9 +579,20 @@ export function applyEditRecovery(ctx, rawConfig = {}) {
 
     if (stats) stats.inspected++;
 
-    const fsService = ctx.get ? ctx.get('fs') : undefined;
-    const cwdService = ctx.get ? ctx.get('workingDirectory') : undefined;
-    const cwd = cwdService?.get?.(session) ?? '';
+    let fsService;
+    try {
+      fsService = ctx.get ? ctx.get('fs') : undefined;
+    } catch {
+      // An unavailable/denied service is not permission to bypass it.
+      fsService = UNAVAILABLE_FS;
+    }
+    let cwd = '';
+    try {
+      const cwdService = ctx.get ? ctx.get('workingDirectory') : undefined;
+      cwd = cwdService?.get?.(session) ?? '';
+    } catch {
+      cwd = '';
+    }
 
     const content = await readTargetForRecovery(
       args.file_path,

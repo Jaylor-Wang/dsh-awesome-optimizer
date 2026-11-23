@@ -86,8 +86,34 @@ export class AgentTelemetryManager {
     this.config = TelemetryConfig(config);
     this.sessionStates = new WeakMap();
     this.sessionsById = new Map();
-    this.activeSession = null;
+    this.activeSessionRef = null;
     this.previousHistories = new WeakMap();
+    this.#sessionFinalizer = new FinalizationRegistry(({ id, ref }) => {
+      if (this.sessionsById.get(id) === ref) {
+        this.sessionsById.delete(id);
+      }
+    });
+  }
+
+  #sessionFinalizer;
+
+  get activeSession() {
+    return this.activeSessionRef?.deref() ?? null;
+  }
+
+  set activeSession(session) {
+    this.activeSessionRef = session && typeof session === 'object' ? new WeakRef(session) : null;
+  }
+
+  #getSessionById(id) {
+    const entry = this.sessionsById.get(id);
+    if (!entry) return undefined;
+    const session = entry instanceof WeakRef ? entry.deref() : entry;
+    if (!session) {
+      this.sessionsById.delete(id);
+      return undefined;
+    }
+    return session;
   }
 
   #digestMessage(message) {
@@ -129,7 +155,14 @@ export class AgentTelemetryManager {
 
   onSessionEvent(session, event) {
     this.activeSession = session;
-    if (session?.id !== undefined) this.sessionsById.set(session.id, session);
+    if (session && typeof session === 'object' && session.id !== undefined) {
+      const existing = this.sessionsById.get(session.id);
+      if (!existing || existing.deref() !== session) {
+        const ref = new WeakRef(session);
+        this.sessionsById.set(session.id, ref);
+        this.#sessionFinalizer.register(session, { id: session.id, ref }, ref);
+      }
+    }
     if (event.type === 'turn/start') {
       const state = this.#createTurnState(event.data.turn);
       this.sessionStates.set(session, state);
@@ -177,15 +210,19 @@ export class AgentTelemetryManager {
 
   onSessionDisposed(session) {
     if (session) this.previousHistories.delete(session);
-    if (session?.id !== undefined && this.sessionsById.get(session.id) === session) {
-      this.sessionsById.delete(session.id);
+    if (session?.id !== undefined) {
+      const ref = this.sessionsById.get(session.id);
+      if (ref && ref.deref() === session) {
+        this.#sessionFinalizer.unregister(ref);
+        this.sessionsById.delete(session.id);
+      }
     }
     if (this.activeSession === session) this.activeSession = null;
   }
 
   wrapStream(options, next) {
     const session = options?.sessionId !== undefined
-      ? this.sessionsById.get(options.sessionId)
+      ? this.#getSessionById(options.sessionId)
       : this.activeSession;
     const state = session ? this.sessionStates.get(session) : null;
     if (!state) return next();
@@ -260,8 +297,11 @@ export class AgentTelemetryManager {
         runtimePolicy: null,
         fileMutationPolicy: null,
         failureRecovery: null,
+        editRecovery: null,
         compositeTools: null,
-        readGuard: null
+        readGuard: null,
+        contextCompaction: null,
+        convergenceGuidance: null
       };
     }
 
@@ -333,8 +373,11 @@ export class AgentTelemetryManager {
       runtimePolicy: this.ctx?.get?.('runtimePolicy')?.getSummary(targetSession, state.turn) ?? null,
       fileMutationPolicy: this.ctx?.get?.('fileMutationPolicy')?.getSummary(targetSession, state.turn) ?? null,
       failureRecovery: this.ctx?.get?.('failureRecovery')?.getStats(targetSession) ?? null,
+      editRecovery: this.ctx?.get?.('editRecovery')?.getStats(targetSession) ?? null,
       compositeTools: this.ctx?.get?.('compositeTools')?.getStats(targetSession) ?? null,
-      readGuard: this.ctx?.get?.('readGuard')?.getStats(targetSession) ?? null
+      readGuard: this.ctx?.get?.('readGuard')?.getStats(targetSession) ?? null,
+      contextCompaction: this.ctx?.get?.('contextCompaction')?.getStats() ?? null,
+      convergenceGuidance: this.ctx?.get?.('convergenceGuidance')?.getSummary(targetSession, state.turn) ?? null
     };
   }
 }

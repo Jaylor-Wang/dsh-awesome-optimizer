@@ -118,6 +118,7 @@ export function applyFailureRecovery(ctx, { enabled = true, maxAttempts = 1 } = 
     const state = states.get(session);
     if (!state) return;
     if (event.type === 'turn/end') {
+      candidates.clear();
       if (state.record) {
         state.record.invalidate('turn-end');
         state.stats.invalidated++;

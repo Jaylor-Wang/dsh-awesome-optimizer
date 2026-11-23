@@ -57,6 +57,9 @@ test('agentTelemetry tracks parallel tool batches, token usage, prefix stability
     assert.deepEqual(summary.readGuard, host.readGuard.getStats(host.agent.session));
     assert.deepEqual(callbackSummary.readGuard, summary.readGuard);
     assert.equal(summary.readGuard.outlineCacheHitRate, null);
+    assert.deepEqual(summary.editRecovery, host.editRecovery.getStats(host.agent.session));
+    assert.deepEqual(summary.contextCompaction, host.ctx.get('contextCompaction').getStats());
+    assert.deepEqual(summary.convergenceGuidance, host.ctx.get('convergenceGuidance').getSummary(host.agent.session, summary.turn));
 
     const sequentialBaseline = {
       modelRequests: 4,
@@ -133,10 +136,19 @@ test('official loop reports detached cache summaries across turns and releases t
 
 test('telemetry exposes null readGuard summaries when no session or guard is available', () => {
   const manager = new AgentTelemetryManager({ get: () => undefined });
-  assert.equal(manager.getSummary().readGuard, null);
-  const session = {};
+  const empty = manager.getSummary();
+  assert.equal(empty.readGuard, null);
+  assert.equal(empty.editRecovery, null);
+  assert.equal(empty.contextCompaction, null);
+  assert.equal(empty.convergenceGuidance, null);
+  const session = { id: 'weak-ref-session' };
   manager.onSessionEvent(session, { type: 'turn/start', data: { turn: 1 } });
-  assert.equal(manager.getSummary(session).readGuard, null);
+  assert.ok(manager.sessionsById.get('weak-ref-session') instanceof WeakRef);
+  const active = manager.getSummary(session);
+  assert.equal(active.readGuard, null);
+  assert.equal(active.editRecovery, null);
+  assert.equal(active.contextCompaction, null);
+  assert.equal(active.convergenceGuidance, null);
 });
 
 test('querying an unavailable turn leaves live telemetry and policy state untouched', async () => {

@@ -46,10 +46,18 @@ function serializeResult(val) {
   if (val === null) return { result: null, resultRepr: 'null' };
 
   let repr;
-  if (typeof val === 'number' && !Number.isInteger(val)) {
-    const rounded = Number(val.toFixed(10));
-    if (Math.abs(val - rounded) < 1e-12) {
-      repr = String(rounded);
+  if (typeof val === 'number') {
+    if (!Number.isFinite(val)) {
+      repr = String(val);
+      return { result: repr, resultRepr: repr };
+    }
+    if (!Number.isInteger(val)) {
+      const rounded = Number(val.toFixed(10));
+      if (Math.abs(val - rounded) < 1e-12) {
+        repr = String(rounded);
+      } else {
+        repr = String(val);
+      }
     } else {
       repr = String(val);
     }
@@ -71,12 +79,19 @@ function serializeResult(val) {
   return { result: serializable, resultRepr: repr };
 }
 
+function formatCaughtError(err) {
+  // Errors thrown inside vm.createContext() belong to a different realm, so `err instanceof Error` is false.
+  if (util.types.isNativeError(err) || err instanceof Error) {
+    return err.stack || err.message || String(err);
+  }
+  if (err && typeof err === 'object' && typeof err.stack === 'string' && err.stack) {
+    return err.stack;
+  }
+  return String(err);
+}
+
 function wrapAsyncCode(code) {
   const trimmed = code.trim();
-  if (/\breturn\s+/.test(trimmed)) {
-    return `(async () => {\n${trimmed}\n})()`;
-  }
-
   const lines = trimmed.split('\n');
   let lastIndex = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -186,11 +201,10 @@ function main() {
 
   const rl = readline.createInterface({
     input: process.stdin,
-    output: process.stdout,
     terminal: false
   });
 
-  rl.on('line', async rawLine => {
+  const handleLine = async rawLine => {
     const line = rawLine.trim();
     if (!line) return;
 
@@ -261,7 +275,7 @@ function main() {
         : await executeInContext(code, CURRENT_CONTEXT);
     } catch (err) {
       success = false;
-      errorMsg = err instanceof Error ? err.stack || err.message : String(err);
+      errorMsg = formatCaughtError(err);
       stderrCapture.write(errorMsg + '\n');
     }
 
@@ -278,6 +292,12 @@ function main() {
       error: success ? null : errorMsg,
       executionTimeMs: elapsedMs
     });
+  };
+
+  // Serialize incoming requests strictly in arrival order even if multiple frames are pipelined.
+  let lineChain = Promise.resolve();
+  rl.on('line', rawLine => {
+    lineChain = lineChain.then(() => handleLine(rawLine)).catch(() => {});
   });
 }
 

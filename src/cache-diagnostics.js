@@ -84,6 +84,12 @@ function acquire() {
           model: identifier(event.model), systemFingerprint: identifier(event.system_fingerprint) });
       } catch { /* Ignore non-JSON events such as [DONE]. */ }
     };
+    const emitSseEvent = rawEvent => {
+      const data = rawEvent.split(/\r\n|\r|\n/)
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trimStart()).join('\n');
+      if (data) observe(data);
+    };
     const append = bytes => {
       pendingBytes += bytes.byteLength;
       if (pendingBytes <= MAX_EVENT) {
@@ -123,11 +129,7 @@ function acquire() {
         }
 
         if (!append(bytes.subarray(start, i))) return;
-        const event = pending + decoder.decode();
-        const data = event.split(/\r\n|\r|\n/)
-          .filter(line => line.startsWith('data:'))
-          .map(line => line.slice(5).trimStart()).join('\n');
-        if (data) observe(data);
+        emitSseEvent(pending + decoder.decode());
         pending = '';
         pendingBytes = 0;
         afterBlankCr = afterCr;
@@ -142,7 +144,13 @@ function acquire() {
       },
       flush() {
         try {
-          if (!isSse && !dropped) observe(pending + decoder.decode());
+          if (!dropped) {
+            const tail = pending + decoder.decode();
+            if (tail) {
+              if (isSse) emitSseEvent(tail);
+              else observe(tail);
+            }
+          }
         } catch { /* Preserve stream completion. */ }
         active.owner.emit({ type: 'complete', request: record.request, captureGap: dropped });
       }
