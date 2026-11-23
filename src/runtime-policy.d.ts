@@ -10,7 +10,9 @@ export interface RuntimePolicyOptions {
   minLargeWriteBytes?: number;
   maxShellCommandBytes?: number;
   maxInlineScriptBytes?: number;
+  /** Legacy fallback for disallowChainedHeavyCommands. Default: false. */
   disallowChainedNetworkCommands?: boolean;
+  /** Block Bash chains containing test or build commands in enforce mode. Default: false. */
   disallowChainedHeavyCommands?: boolean;
 }
 

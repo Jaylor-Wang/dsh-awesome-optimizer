@@ -166,6 +166,27 @@ test('runtimePolicy blocks chained heavy concurrent or publishing tasks while al
   }
 });
 
+test('runtimePolicy allows test and build chaining by default and keeps npm publish standalone', async () => {
+  const host = await createTestRuntime({
+    script: [
+      [call('test', 'bash', { command: 'npm test && git status' })],
+      [call('build', 'bash', { command: 'npm run build && git status' })],
+      [call('vitest', 'bash', { command: 'vitest run; git status' })],
+      [call('publish-chain', 'bash', { command: 'git status && npm publish' })],
+      [call('publish-standalone', 'bash', { command: 'npm publish' })],
+      [{ type: 'text', text: 'Complete.' }]
+    ]
+  });
+  try {
+    await host.run('Check the default Bash policy');
+    assert.deepEqual(host.errors, []);
+    assert.deepEqual(host.calls.map(({ id }) => id), ['test', 'build', 'vitest', 'publish-standalone']);
+    assert.equal(host.runtimePolicy.getSummary(host.agent.session).shellPayloadBlocks, 1);
+  } finally {
+    await host.dispose();
+  }
+});
+
 test('runtimePolicy blocks playwright-cli commands using file: protocol', async () => {
   const fileCmd = 'playwright-cli open "file:///${PWD}/index.html"';
   const httpCmd = 'playwright-cli open "http://127.0.0.1:8080/index.html"';

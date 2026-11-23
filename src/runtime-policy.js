@@ -11,7 +11,7 @@ export const RuntimePolicyConfig = z.object({
   minLargeWriteBytes: z.number().step(1).min(1).default(8192),
   maxShellCommandBytes: z.number().step(1).min(256).default(4096),
   maxInlineScriptBytes: z.number().step(1).min(128).default(512),
-  disallowChainedNetworkCommands: z.boolean().default(true),
+  disallowChainedNetworkCommands: z.boolean().default(false),
   disallowChainedHeavyCommands: z.boolean()
 });
 
@@ -392,26 +392,25 @@ export class RuntimePolicyManager {
         };
       }
 
-      // Guard against dangerous heavy concurrent or publishing command chaining on Windows
-      const blockChainedHeavy = this.config.disallowChainedHeavyCommands ?? this.config.disallowChainedNetworkCommands;
-      if (blockChainedHeavy) {
-        const hasCompoundOperator = /(&&|;)/.test(unquoted);
-        if (hasCompoundOperator) {
-          const hasBlockedCompoundAction = /(?:^|[\s;&|])(?:npm\s+(?:test|t|run\s+build|publish)|vitest)\b/i.test(unquoted);
-          if (hasBlockedCompoundAction) {
-            state.shellPayloadBlocks++;
-            state.policyDenials++;
-            if (exec.token !== undefined) state.deniedTokens.add(exec.token);
-            return {
-              kind: 'deny',
-              reason: JSON.stringify({
-                code: 'CHAINED_HEAVY_COMMAND',
-                reason: "Heavy tasks ('npm test', 'npm run build', 'vitest', 'npm publish') must run standalone to prevent Windows deadlocks.",
-                nextAction: "Execute heavy tasks standalone, then chain lightweight commands via '&&'.",
-                retryable: false
-              })
-            };
-          }
+      if (/(&&|;)/.test(unquoted)) {
+        const chainedPublish = /(?:^|[\s;&|])npm\s+publish\b/i.test(unquoted);
+        const blockChainedHeavy = this.config.disallowChainedHeavyCommands ?? this.config.disallowChainedNetworkCommands;
+        const chainedTestOrBuild = blockChainedHeavy && /(?:^|[\s;&|])(?:npm\s+(?:test|t|run\s+build)|vitest)\b/i.test(unquoted);
+        if (chainedPublish || chainedTestOrBuild) {
+          state.shellPayloadBlocks++;
+          state.policyDenials++;
+          if (exec.token !== undefined) state.deniedTokens.add(exec.token);
+          return {
+            kind: 'deny',
+            reason: JSON.stringify({
+              code: 'CHAINED_HEAVY_COMMAND',
+              reason: chainedPublish
+                ? "Run 'npm publish' standalone so its outcome can be verified separately."
+                : "This profile requires 'npm test', 'npm run build', and 'vitest' to run standalone.",
+              nextAction: 'Use a separate Bash call for the blocked command.',
+              retryable: false
+            })
+          };
         }
       }
     }
