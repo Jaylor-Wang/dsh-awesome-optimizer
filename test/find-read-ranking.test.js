@@ -140,3 +140,23 @@ test('official loop displays a later multi-pattern definition on the first read 
     assert.match(output, /source\.ts: L1/);
   } finally { await host.dispose(); }
 });
+
+test('declaration ranking supports TS classes/arrows and Python, Go, and Rust declarations', () => {
+  const cases = [
+    ['ref.ts', 'const x = new PolicyEngine();', 'def.ts', 'PolicyEngine', 'export class PolicyEngine {'],
+    ['ref.ts', 'const y = computeScore(1);', 'def.ts', 'computeScore', 'export const computeScore = (n: number) => n * 2;'],
+    ['ref.py', 'result = build_index(items)', 'def.py', 'build_index', 'async def build_index(items):'],
+    ['ref.go', 'worker.RunTask(ctx)', 'def.go', 'RunTask', 'func (w *Worker) RunTask(ctx Context) error {'],
+    ['ref.rs', 'let s = parse_frame(buf);', 'def.rs', 'parse_frame', 'pub async fn parse_frame(buf: &[u8]) -> Frame {'],
+    ['ref.rs', 'let cfg = EngineConfig::default();', 'def.rs', 'EngineConfig', 'pub struct EngineConfig {']
+  ];
+  for (const [refPath, refLine, defPath, symbol, defLine] of cases) {
+    const refs = file(refPath, [[1, [symbol], refLine]]);
+    const defs = file(defPath, [[10, [symbol], defLine]]);
+    const chosen = selectReadWindows(
+      [task(refs, 1, 1, [1]), task(defs, 9, 11, [10])],
+      { maxFiles: 1, maxWindows: 1, maxReadLines: 3 }
+    );
+    assert.equal(chosen[0].file.displayPath, defPath, `Expected ${defPath} declaration to beat ${refPath} for ${symbol}`);
+  }
+});

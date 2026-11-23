@@ -5,19 +5,18 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-202%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-207%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 High-performance runtime policy guards, persistent Python & Node evaluation daemons, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
 
-## Highlights in v4.2.0
+## Highlights in v4.3.0
 
-- **Hardened runtime policy & convergence**: Rewrote Bash command analysis as a single-pass quote/segment parser (fixing quote-interleaving bypasses, POSIX single-quote escapes, `||`/newline chaining, generic heredocs, and `playwright-cli` flag handling), extended `NO_PROGRESS` detection to alternating read-only failure loops with mutating-progress resets, hydrated initial session `workingDirectory` on the first turn, and fixed `convergence` error suppression so a single failed step suppresses only the immediately following step.
-- **Persistent eval reliability & security baseline**: Fixed strict RFC 8259 JSON serialization for `NaN`/`Infinity` in `py_worker.py` and `node_worker.mjs`, preserved cross-realm VM error stacks (`util.types.isNativeError`), serialized pipelined Node requests, added `_drainQueue` re-entrancy guards and watchdog fallbacks, stripped sensitive credential/`DSH_*` env vars by default (`sanitizeEnv: true`), gated tool admission on host `bash` availability (`requireShellTool: true`), and exposed a standard Cordis sub-plugin interface on `./persistent-eval`.
-- **Bounded preflight, memory hygiene & observability**: Added `stat` size preflight and bounded `readBytes`/`streamText` seams to `editRecovery` and `edit_batch` (`maxPreflightBytes`), unified CRLF preflight normalization, eliminated strong-reference session/cache leaks across `readGuard`, `telemetry`, `DaemonPool`, and `customPrompt` (`maxWatchedWorkspaces`), fixed `customPrompt` `$DSH_HOME` resolution and multi-candidate hot-reload, counted per-line `linesTruncated`, aggregated `editRecovery`/`contextCompaction`/`convergenceGuidance` in turn telemetry, and handled trailing SSE events on EOF in HTTP cache diagnostics.
-- **Leaner surface & verified export parity**: Removed the unused `prompt-linter` module and the `experimentalReadRanges` pilot, aligned symmetric root/subpath `.d.ts` and runtime exports (including `extractCodeOutline`/`formatCodeOutline` on `./read-guard`), and added automated `.d.ts`-to-runtime export contract tests.
+- **Signal-driven soft convergence (`convergence`)**: Upgraded default `convergence` behavior to `mode: "adaptive"` (preserving `periodic` opt-in). Triggers compact append-only notices only on efficiency degradation—consecutive single-tool serial reads (`serialReadThreshold: 4`) or long-tail exploration without edits/verification (`longTailStepThreshold: 12`, `stallStepsThreshold: 6`)—stays silent during active edits/verification, stretches thresholds and cooldowns 2× for healthy high-parallel batches, enforces `cooldownSteps: 6` to eliminate post-error bursts, isolates composite sub-call errors (`exec.parent`), completes cross-turn `snapshotEvents()` replay, and dynamically tailors `buildGuidance` to admitted tools.
+- **Composite tooling hardening & modularization (`find_and_read`, `edit_batch`)**: Fixed `find_and_read` `read` admission checks to honor step `exec.toolSet`, normalized Windows/POSIX paths when deduplicating `parseGrepOutput` metadata + text hits, expanded `find-read-ranking.js` exact-declaration preference to TypeScript classes/arrows, Python, Go, and Rust, and extracted `edit_batch` into `src/edit-batch.js` with cached `resolve` error handling, preserved denial messages, and non-atomic alias grouping.
+- **Unified bounded FS preflight & `readGuard` optimization**: Extracted shared `src/fs-preflight.js` across `readGuard`, `editRecovery`, and `edit_batch` with safe `workingDirectory`/`fs` lookups (also hardened in `runtimePolicy` and `fileMutationPolicy`), replaced `readGuard`'s upfront `maxInspectBytes + 1` local buffer allocation with chunked reads, hoisted hot-loop `RegExp` compilation in `code-outline.js`, skipped extensionless non-code files before I/O, invalidated outline caches on `retry_failed_write`, and called `.unref?.()` on `ast-outline.js` timers.
 
 ---
 
@@ -78,8 +77,8 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
 
 ### 4. Lightweight Convergence & Objective A/B Telemetry
 
-- **Micro-Directive Convergence (`convergence`)**:
-  Appends soft guidance notices when steps approach budget intervals (default `stepInterval: 8`, max `4` per turn). Features **error-aware suppression**: automatically silences notices during debugging so trouble resolution remains uninterrupted.
+- **Signal-Driven Soft Convergence (`convergence`)**:
+  Defaults to `mode: "adaptive"`, injecting compact append-only `notice` directives only on efficiency degradation instead of blind step intervals: detects consecutive single-tool serial reads (`serialReadThreshold: 4`) to suggest parallel batching / `find_and_read`, detects long-tail exploration without edits or verification (`longTailStepThreshold: 12`, `stallStepsThreshold: 6`) with objective step anchors, stretches cooldowns/thresholds 2× for healthy high-parallel batches, enforces `cooldownSteps` (default `6`, preventing post-error bursts), suppresses reminders after top-level tool errors, and filters guidance to admitted tools. Set `mode: "periodic"` to opt into fixed `stepInterval` reminders.
 - **Objective A/B Telemetry (`telemetry`)**:
   Collects model requests, tool calls, tool calls per batch (`parallelismRatio`), TTFT, token usage, and adapter message-prefix changes (`prefixChanges`). `getSummary(session, turn)` reads the latest tracked turn without changing it; older or unknown turns return an empty summary. For cache totals and reporting coverage, see [HTTP cache diagnostics](cache-diagnostics.md).
 

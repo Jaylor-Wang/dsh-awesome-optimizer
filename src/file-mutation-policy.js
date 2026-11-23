@@ -246,6 +246,14 @@ export class FileMutationPolicyManager {
   }
 }
 
+function safeGetService(ctx, key) {
+  try {
+    return ctx?.get ? ctx.get(key) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Apply file mutation policy to Cordis context.
  */
@@ -253,8 +261,8 @@ export function applyFileMutationPolicy(ctx, rawConfig = {}) {
   const config = FileMutationPolicyConfig(rawConfig);
   if (config.mode === 'off') return null;
 
-  const fsService = ctx.get ? ctx.get('fs') : undefined;
-  const workingDirectory = ctx.get ? ctx.get('workingDirectory') : undefined;
+  const fsService = safeGetService(ctx, 'fs');
+  const workingDirectory = safeGetService(ctx, 'workingDirectory');
   const manager = new FileMutationPolicyManager(config, fsService, workingDirectory);
 
   ctx.on('session/event', (session, event) => {
@@ -269,9 +277,9 @@ export function applyFileMutationPolicy(ctx, rawConfig = {}) {
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (!exec.agent) return next();
-    const effectiveWd = (ctx.get ? ctx.get('workingDirectory') : undefined) ?? manager.workingDirectory;
+    const effectiveWd = safeGetService(ctx, 'workingDirectory') ?? manager.workingDirectory;
     if (effectiveWd && !manager.workingDirectory) manager.workingDirectory = effectiveWd;
-    const effectiveFs = (ctx.get ? ctx.get('fs') : undefined) ?? manager.fsService;
+    const effectiveFs = safeGetService(ctx, 'fs') ?? manager.fsService;
     const decision = await manager.evaluateToolExecution(exec.agent.session, exec, ctx.tools, effectiveFs);
     if (!decision.allowed) {
       return {

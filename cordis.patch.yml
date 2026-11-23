@@ -39,8 +39,12 @@
           enabled: true
         convergence:
           enabled: true
+          mode: adaptive
           injectGuidance: true
-          stepInterval: 8
+          cooldownSteps: 6
+          serialReadThreshold: 4
+          longTailStepThreshold: 12
+          stallStepsThreshold: 6
           maxRemindersPerTurn: 4
         customPrompt:
           enabled: true

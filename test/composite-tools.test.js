@@ -144,6 +144,13 @@ test('parseGrepOutput handles DSH grouped format, ripgrep Windows paths, and mer
     { start: 7, end: 17, matchedLines: [10, 14] },
     { start: 47, end: 53, matchedLines: [50] }
   ]);
+
+  // Windows backslash vs POSIX slash paths must deduplicate cleanly when merging meta + rendered text
+  const mixedDedup = parseGrepOutput(
+    'src\\policy.js:10:export function check() {}\n',
+    { matches: [{ path: 'src/policy.js', lineNumber: 10, line: 'export function check() {}' }] }
+  );
+  assert.equal(mixedDedup.length, 1);
 });
 
 test('edit_batch edits multiple files in a single tool call through ToolExecutionPipeline', async () => {
@@ -651,5 +658,112 @@ test('edit_batch non-atomic preflight normalizes CRLF and reports multiple-match
     assert.match(dupText, /contains 2 exact matches/);
   } finally {
     await host.dispose();
+  }
+});
+
+test('find_and_read respects step toolSet read admission and tolerates throwing workingDirectory', async () => {
+  const host = await createTestRuntime({
+    files: { 'a.ts': 'export const target = 1;\n' },
+    script: [
+      [call('fr-no-read', 'find_and_read', { pattern: 'target', contextLines: 2 })],
+      [{ type: 'text', text: 'Degraded to match listing cleanly.' }]
+    ]
+  });
+
+  try {
+    // Shadow read with a per-agent conditional tool denied in the step toolSet
+    host.agent.ctx.tools.register({
+      name: 'read',
+      description: 'Conditional read denied for this step.',
+      parameters: { type: 'object', required: ['file_path'], properties: { file_path: { type: 'string' } } },
+      output: { schema: { type: 'string' }, render: (_a, v) => [{ type: 'text', text: v }] },
+      async execute() { throw new Error('read should not be dispatched'); }
+    }, { when: () => false });
+
+    const origGet = host.ctx.get.bind(host.ctx);
+    host.ctx.get = name => {
+      if (name === 'workingDirectory') throw new Error('cwd service unavailable');
+      return origGet(name);
+    };
+
+    await host.run('Search when read tool is not admitted in toolSet');
+    assert.equal(host.errors.length, 0);
+    assert.equal(host.calls.filter(c => c.name === 'read').length, 0);
+    const result = host.events.find(e => e.type === 'tool/result').data.message;
+    const output = result.content.map(b => b.text).join('\n');
+    assert.equal(result.isError, false, `Unexpected tool error: ${output}`);
+    assert.match(output, /=== a\.ts \(1 matches\) ===/);
+    assert.match(output, /1: export const target = 1;/);
+  } finally {
+    await host.dispose();
+  }
+});
+
+test('edit_batch caches resolve failures, preserves resolve denial errors, and groups aliases in non-atomic mode', async () => {
+  // 1. Atomic mode caches repeated ENOENT resolves and preserves real EACCES error messages
+  const resolveCounts = new Map();
+  const strictHost = await createTestRuntime({
+    files: {},
+    configureTools(ctx) {
+      ctx.get('fs').resolve = async filePath => {
+        resolveCounts.set(filePath, (resolveCounts.get(filePath) ?? 0) + 1);
+        if (filePath === 'missing.ts') {
+          throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+        }
+        throw Object.assign(new Error('sandbox forbids path'), { code: 'EACCES' });
+      };
+    },
+    script: [
+      [call('eb-resolve', 'edit_batch', {
+        atomic: true,
+        edits: [
+          { file_path: 'missing.ts', old_string: 'a', new_string: 'b' },
+          { file_path: 'missing.ts', old_string: 'c', new_string: 'd' },
+          { file_path: 'forbidden.ts', old_string: 'x', new_string: 'y' }
+        ]
+      })],
+      [{ type: 'text', text: 'Handled resolve errors.' }]
+    ]
+  });
+
+  try {
+    await strictHost.run('Verify resolve caching and denial reporting');
+    assert.equal(resolveCounts.get('missing.ts'), 1);
+    assert.equal(resolveCounts.get('forbidden.ts'), 1);
+    const result = strictHost.events.find(e => e.type === 'tool/result').data.message;
+    assert.equal(result.isError, true);
+    const text = result.content.map(b => b.text).join('\n');
+    assert.match(text, /target file does not exist/);
+    assert.match(text, /sandbox forbids path \(EACCES\)/);
+  } finally {
+    await strictHost.dispose();
+  }
+
+  // 2. Non-atomic mode groups aliased paths by resolved targetKey to preflight and fail-fast together
+  const aliasHost = await createTestRuntime({
+    files: { 'real.ts': 'const first = 1;\nconst second = 2;\n' },
+    configureTools(ctx, { virtualFs }) {
+      const fsService = ctx.get('fs');
+      fsService.resolve = async displayPath => ({ displayPath, targetKey: 'real.ts' });
+      fsService.readText = async () => virtualFs.get('real.ts');
+    },
+    script: [
+      [call('eb-alias-non-atomic', 'edit_batch', {
+        atomic: false,
+        edits: [
+          { file_path: 'real.ts', old_string: 'first = 1', new_string: 'first = 9' },
+          { file_path: 'symlink-to-real.ts', old_string: 'missing_line', new_string: 'nope' }
+        ]
+      })],
+      [{ type: 'text', text: 'Alias preflight protected real.ts.' }]
+    ]
+  });
+
+  try {
+    await aliasHost.run('Verify non-atomic alias grouping');
+    assert.equal(aliasHost.calls.filter(c => c.name === 'edit').length, 0);
+    assert.equal(aliasHost.virtualFs.get('real.ts'), 'const first = 1;\nconst second = 2;\n');
+  } finally {
+    await aliasHost.dispose();
   }
 });

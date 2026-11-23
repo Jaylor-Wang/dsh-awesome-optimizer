@@ -5,19 +5,18 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-202%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-207%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、持久化 Python/Node 执行内核、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
 
-## v4.2.0 更新亮点
+## v4.3.0 更新亮点
 
-- **运行时策略与收敛加固**：重写单遍 Bash 引号/分段词法解析（修复引号交错绕过、POSIX 单引号反斜杠、`||`/换行串联、通用 heredoc 与带参数 `playwright-cli` 识别，消除跨命令误杀），`NO_PROGRESS` 熔断覆盖交替只读失败循环并在变更操作成功后自动复位，首轮自动水合会话 `workingDirectory`，修复 `convergence` 单次失败连抑两步的状态机缺陷。
-- **持久化求值可靠性与安全基线**：`py_worker.py` 与 `node_worker.mjs` 强制 RFC 8259 严格 JSON（消除 `NaN`/`Infinity` 导致的静默超时），修复 Node 跨 VM Realm 异常堆栈丢失并串行化入站请求，为 `StdioWorkerRunner` 增加队列排空互斥、单次超时精确上报与 watchdog 强杀兜底；默认剥离敏感凭据与 `DSH_*` 环境变量（`sanitizeEnv: true`）、按 `bash` 准入约束工具可见性（`requireShellTool: true`），并为 `./persistent-eval` 补齐标准 Cordis 子插件导出。
-- **有界预检、内存卫生与可观测性**：为 `editRecovery` 与 `edit_batch` 补齐 `stat` 大小预检及 `readBytes`/`streamText` 有界读取（`maxPreflightBytes`）并统一 CRLF 预检；清理 `readGuard`、`telemetry`、`DaemonPool` 与 `customPrompt`（`maxWatchedWorkspaces`）中的会话/缓存强引用泄漏；修复 `customPrompt` 的 `$DSH_HOME` 解析与多候选热重载；修正 `linesTruncated` 按行计数、在遥测摘要聚合 `editRecovery`/`contextCompaction`/`convergenceGuidance`，并补齐 HTTP 缓存诊断对无尾空行 SSE 尾帧的解析。
-- **精简契约与导出一致性**：彻底移除孤立的 `prompt-linter` 模块与 `experimentalReadRanges` 试点，对齐全部根/子路径 `.d.ts` 与运行时导出（含 `./read-guard` 补齐大纲导出），并新增全子路径导出契约自动测试。
+- **效率信号驱动软收敛 (`convergence`)**：默认升级为 `mode: "adaptive"`（保留 `periodic` 兼容），仅在出现效率退化信号时追加极简 `notice`——连续单工具只读达到 `serialReadThreshold`（默认 `4`）时引导并行批读或使用 `find_and_read`，长尾探索达到 `longTailStepThreshold`（默认 `12`）且连续 `stallStepsThreshold`（默认 `6`）步无编辑/验证时给出带客观步数锚点的收敛提示；活跃编辑/验证全程静默，健康高并行批读自动 2× 拉长阈值与冷却；引入 `cooldownSteps: 6` 杜绝报错恢复后连发、过滤复合工具子调用（`exec.parent`）、补齐跨轮 `snapshotEvents()` 回放，并按实际准入工具动态裁剪 `buildGuidance`。
+- **复合工具加固与模块化 (`find_and_read` / `edit_batch`)**：修复 `find_and_read` 的 `read` 准入校验漏传 `exec.toolSet`、`parseGrepOutput` 合并去重统一规范化 Windows/POSIX 路径、`find-read-ranking.js` 声明优先扩展至 TS 类/箭头函数与 Python/Go/Rust；将 `edit_batch` 拆分为独立模块 `src/edit-batch.js`，修复 `resolve` 失败重复调用与权限拒绝原因透传，并在非 `atomic` 模式下按解析后的物理身份合并别名路径预检与熔断。
+- **共享有界预检与 `readGuard` 性能优化**：抽取共享 `src/fs-preflight.js` 统一 `readGuard`、`editRecovery` 与 `edit_batch` 的有界读取与 `workingDirectory`/`fs` 安全获取（同步加固 `runtimePolicy` 与 `fileMutationPolicy`）；将 `readGuard` 本地回退改为按需分块读取、把 `code-outline.js` 热循环内 3 处正则提取为顶层预编译常量、跳过无扩展名非代码文件盲读 I/O、补齐 `retry_failed_write` 缓存失效，并为 `ast-outline.js` 计时器添加 `.unref?.()`。
 
 ---
 
@@ -78,8 +77,8 @@
 
 ### 4. 轻量软收敛提示与客观 A/B 度量
 
-- **轻量微指令收敛 (`convergence`)**：
-  在步数达到阈值后追加精简的 `notice` 收敛引导（默认 `stepInterval: 8`，每轮上限 `4` 次），且内置**错误感知避让**：模型上一步工具调用报错时自动静默，优先保证排错连贯性。
+- **效率信号驱动软收敛 (`convergence`)**：
+  默认采用 `mode: "adaptive"`，不再按固定步数机械复读，而是仅在出现效率退化信号时追加极简 `notice`：连续单工具串行读/搜达到 `serialReadThreshold`（默认 `4` 步）时定向引导并行批读或使用 `find_and_read`；步数达到 `longTailStepThreshold`（默认 `12`）且近期连续 `stallStepsThreshold`（默认 `6`）步无编辑或验证进展时给出带客观步数锚点的收敛提示；健康高并行任务自动拉长 2 倍阈值与冷却期，正常变更/测试推进全程静默；内置 `cooldownSteps`（默认 `6`）杜绝报错恢复后连发、顶层工具报错避让（隔离复合工具子调用），并按实际可用工具动态裁剪系统提示指引。如需固定节拍可显式配置 `mode: "periodic"`。
 - **客观 A/B 效果度量 (`telemetry`)**：
   追踪模型请求、工具调用、每批工具数（`parallelismRatio`）、首字延迟、Token 用量和适配器消息前缀变化（`prefixChanges`）。`getSummary(session, turn)` 只读查询最近跟踪的回合；更早或未知的回合返回空摘要。缓存用量和统计覆盖率见 [HTTP 缓存诊断](cache-diagnostics.md)。
 

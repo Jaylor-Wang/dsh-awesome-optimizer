@@ -631,6 +631,14 @@ export class RuntimePolicyManager {
   }
 }
 
+function safeGetService(ctx, key) {
+  try {
+    return ctx?.get ? ctx.get(key) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Apply the runtime policy plugin to the Cordis context.
  */
@@ -638,12 +646,12 @@ export function applyRuntimePolicy(ctx, rawConfig = {}) {
   const config = RuntimePolicyConfig(rawConfig);
   if (config.mode === 'off') return null;
 
-  const workingDirectory = ctx.get ? ctx.get('workingDirectory') : undefined;
+  const workingDirectory = safeGetService(ctx, 'workingDirectory');
   const manager = new RuntimePolicyManager(config, workingDirectory);
 
   ctx.on('session/event', (session, event) => {
     if (event.type === 'turn/start') {
-      if (!manager.workingDirectory && ctx.get) manager.workingDirectory = ctx.get('workingDirectory');
+      if (!manager.workingDirectory) manager.workingDirectory = safeGetService(ctx, 'workingDirectory');
       manager.onTurnStart(session, event.data.turn);
     } else if (event.type === 'turn/end') {
       manager.onTurnEnd(session);
@@ -656,7 +664,7 @@ export function applyRuntimePolicy(ctx, rawConfig = {}) {
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (!exec.agent) return next();
-    if (!manager.workingDirectory && ctx.get) manager.workingDirectory = ctx.get('workingDirectory');
+    if (!manager.workingDirectory) manager.workingDirectory = safeGetService(ctx, 'workingDirectory');
     const decision = manager.evaluatePreExecute(exec.agent.session, exec);
     if (decision.kind === 'deny') {
       return decision;

@@ -6,7 +6,7 @@ import type { EditRecoveryOptions } from './edit-recovery.d.ts';
 import type { ReadGuardOptions } from './read-guard.d.ts';
 import type { CompositeToolsOptions } from './composite-tools.d.ts';
 import type { PersistentEvalOptions, PersistentEvalService } from './persistent-eval/index.d.ts';
-import type { ConvergenceOptions } from './convergence.d.ts';
+import type { ConvergenceOptions, ConvergenceSignal } from './convergence.d.ts';
 import type { CustomPromptOptions } from './custom-prompt.d.ts';
 import type { TelemetryOptions } from './telemetry.d.ts';
 import type { ContextCompactionOptions, ContextCompactionService } from './context-compaction.d.ts';
@@ -30,7 +30,7 @@ export interface AgentOptimizerConfig {
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
-    'optimizer-convergence': { kind: 'optimizer-convergence'; form: 'notice'; summary: string };
+    'optimizer-convergence': { kind: 'optimizer-convergence'; form: 'notice'; summary: string; signal?: ConvergenceSignal };
     'optimizer-write-recovery': { kind: 'optimizer-write-recovery'; form: 'notice'; summary: string; callId: string };
   }
 }
@@ -108,8 +108,12 @@ export {
   applyConvergence,
   ConvergenceConfig,
   SOURCE as CONVERGENCE_SOURCE,
+  buildGuidance,
   GUIDANCE,
   REMINDER,
+  type BuildGuidanceOptions,
+  type ConvergenceMode,
+  type ConvergenceSignal,
   type ConvergenceOptions,
   type ConvergenceSummary,
   type ConvergenceService

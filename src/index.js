@@ -7,7 +7,7 @@ import { applyCompositeTools, CompositeToolsConfig, FIND_AND_READ_TOOL, EDIT_BAT
 import { applyReadGuard, ReadGuardConfig, READ_GUARD_SOURCE, truncateLongLines } from './read-guard.js';
 import { extractCodeOutline, formatCodeOutline } from './code-outline.js';
 import { applyPersistentEval, PersistentEvalConfig, EVAL_PYTHON_TOOL, EVAL_NODE_TOOL, formatEvalOutput, StdioWorkerRunner, DaemonPool } from './persistent-eval/index.js';
-import { applyConvergence, ConvergenceConfig, SOURCE as CONVERGENCE_SOURCE, GUIDANCE, REMINDER } from './convergence.js';
+import { applyConvergence, ConvergenceConfig, SOURCE as CONVERGENCE_SOURCE, buildGuidance, GUIDANCE, REMINDER } from './convergence.js';
 import { applyCustomPrompt, CustomPromptConfig, CustomPromptManager, SECTION_NAME as CUSTOM_PROMPT_SECTION, ENVIRONMENT_FACTS_SECTION, formatEnvironmentFacts, detectPythonEnv, resetPythonCacheForTesting } from './custom-prompt.js';
 import { applyTelemetry, TelemetryConfig, AgentTelemetryManager, compareTurnSummaries } from './telemetry.js';
 import { applyContextCompaction, ContextCompactionConfig } from './context-compaction.js';
@@ -144,6 +144,7 @@ export {
   CustomPromptManager,
   CustomPromptConfig,
   applyCustomPrompt,
+  buildGuidance,
   GUIDANCE,
   REMINDER,
   applyContextCompaction,

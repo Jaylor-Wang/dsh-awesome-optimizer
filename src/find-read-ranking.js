@@ -1,4 +1,48 @@
-/** Choose bounded windows by pattern coverage, then prefer exact-name function declarations. */
+import path from 'node:path';
+
+const JS_TS_EXTS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts']);
+const PY_EXTS = new Set(['.py', '.pyw']);
+const GO_EXTS = new Set(['.go']);
+const RS_EXTS = new Set(['.rs']);
+
+// Precompiled single-line exact-name declaration hints (never match comments or imports).
+const JS_DECL_PATTERNS = [
+  /^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function(?:\s*\*\s*|\s+)([A-Za-z_$][A-Za-z0-9_$]*)\s*(?=\(|<)/,
+  /^\s*(?:export\s+(?:default\s+)?)?(?:abstract\s+)?(?:class|interface|type|enum)\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/,
+  /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:[^=;]+)?\s*=\s*(?:async\s+)?(?:(?:<[^;{}]+>\s*)?\(|function(?:\s*\*)?(?:\s+[A-Za-z_$][A-Za-z0-9_$]*)?\s*\(|[A-Za-z_$][A-Za-z0-9_$]*\s*=>)/
+];
+const PY_DECL_PATTERNS = [
+  /^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]+\])?\s*\(/,
+  /^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]+\])?\s*(?:\(|:)/
+];
+const GO_DECL_PATTERNS = [
+  /^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]+\])?\s*\(/,
+  /^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]+\])?\s+(?:struct|interface)\b/
+];
+const RS_DECL_PATTERNS = [
+  /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|unsafe|const|extern(?:\s+"[^"]+")?)\s+)*fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?=\(|<)/,
+  /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:unsafe|auto)\s+)?(?:struct|enum|trait|type)\s+([A-Za-z_][A-Za-z0-9_]*)\b/
+];
+
+function declarationPatternsFor(filePath) {
+  if (typeof filePath !== 'string' || !filePath || /\.d\.[cm]?ts$/i.test(filePath)) return null;
+  const ext = path.extname(filePath).toLowerCase();
+  if (JS_TS_EXTS.has(ext)) return JS_DECL_PATTERNS;
+  if (PY_EXTS.has(ext)) return PY_DECL_PATTERNS;
+  if (GO_EXTS.has(ext)) return GO_DECL_PATTERNS;
+  if (RS_EXTS.has(ext)) return RS_DECL_PATTERNS;
+  return null;
+}
+
+function matchDeclarationName(text, patterns) {
+  for (const regex of patterns) {
+    const match = text.match(regex);
+    if (match) return match[1];
+  }
+  return undefined;
+}
+
+/** Choose bounded windows by pattern coverage, then prefer exact-name declarations. */
 export function selectReadWindows(candidates, limits) {
   const declarations = indexDeclarations(candidates);
   const chosen = selectPlan(candidates, limits, new Map());
@@ -49,13 +93,14 @@ function selectPlan(candidates, limits, declarations, declarationWeight = 0) {
 function indexDeclarations(candidates) {
   const index = new Map();
   for (const file of new Set(candidates.map(candidate => candidate.file))) {
-    if (!/\.[cm]?[jt]sx?$/i.test(file.displayPath) || /\.d\.[cm]?ts$/i.test(file.displayPath)) continue;
+    const langPatterns = declarationPatternsFor(file.displayPath);
+    if (!langPatterns) continue;
     for (const [line, patterns] of file.linePatterns) {
       const text = file.lines?.get(line);
       if (!text) continue;
-      // A lexical hint, not a parser: only same-line named functions and exact query names.
-      const name = text.match(/^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function(?:\s*\*\s*|\s+)([A-Za-z_][A-Za-z_0-9]*)\s*(?=\(|<)/)?.[1];
-      if (!patterns.has(name)) continue;
+      // A lexical hint, not a parser: only same-line named declarations and exact query names.
+      const name = matchDeclarationName(text, langPatterns);
+      if (!name || !patterns.has(name)) continue;
       if (!index.has(file)) index.set(file, new Map());
       index.get(file).set(line, name);
     }

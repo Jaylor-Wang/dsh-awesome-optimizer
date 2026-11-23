@@ -42,11 +42,22 @@ async function inspect({ filePath = 'target.ts', files, configure, maxInspectByt
   } finally { await host.dispose(); }
 }
 
-test('readGuard skips unsupported extensions before resolve, stat, or content reads', async () => {
-  await inspect({ filePath: 'large.json' }, ({ counters, output }) => {
-    assert.deepEqual(counters, { resolve: 0, stat: 0, reads: 0, readText: 0 });
-    assert.equal(output, truncated);
-  });
+test('readGuard skips unsupported and extensionless files before resolve, stat, or content reads', async () => {
+  for (const filePath of ['large.json', 'Makefile', 'CHANGELOG']) {
+    await inspect({ filePath }, ({ counters, output }) => {
+      assert.deepEqual(counters, { resolve: 0, stat: 0, reads: 0, readText: 0 });
+      assert.equal(output, truncated);
+    });
+  }
+  assert.deepEqual(extractCodeOutline('all:\n\techo hi\n', { filePath: 'Makefile' }), []);
+  assert.deepEqual(
+    extractCodeOutline('#!/usr/bin/env python3\ndef cli_main():\n    pass\n', { filePath: 'bin/tool' }).map(e => e.text),
+    ['def cli_main()']
+  );
+  assert.deepEqual(
+    extractCodeOutline('export function defaultJs() {}\n').map(e => e.text),
+    ['export function defaultJs()']
+  );
 });
 
 test('readGuard rejects known oversized, absent, non-file, and unknown-size targets before reads', async () => {

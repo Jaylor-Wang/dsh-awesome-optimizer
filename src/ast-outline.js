@@ -48,9 +48,11 @@ export function runAstOutline(content, filePath, {
       try { child?.kill('SIGKILL'); } catch {}
       // Do not hold a read hook indefinitely if the platform never emits close.
       killTimer = setTimeout(() => finish({ status }), 100);
+      killTimer.unref?.();
     };
     const abort = () => stop('aborted');
     const timer = setTimeout(() => stop('timeout'), timeoutMs);
+    timer.unref?.();
     signal?.addEventListener('abort', abort, { once: true });
     try {
       const env = Object.fromEntries(Object.entries(process.env).filter(([name, value]) =>

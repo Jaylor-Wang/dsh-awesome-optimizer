@@ -11,7 +11,11 @@ import recoveryPlugin, { type FailureRecoveryOptions } from 'dsh-awesome-optimiz
 import editRecoveryPlugin, { type EditRecoveryOptions, buildEditFailureHint } from 'dsh-awesome-optimizer/edit-recovery';
 import readGuardPlugin, { type ReadGuardOptions, extractCodeOutline, formatCodeOutline } from 'dsh-awesome-optimizer/read-guard';
 import compositePlugin, { type CompositeToolsOptions, FIND_AND_READ_TOOL, mergeMatchWindows } from 'dsh-awesome-optimizer/composite-tools';
-import convergencePlugin, { type ConvergenceOptions } from 'dsh-awesome-optimizer/convergence';
+import convergencePlugin, {
+  buildGuidance,
+  type ConvergenceOptions,
+  type ConvergenceSignal
+} from 'dsh-awesome-optimizer/convergence';
 import customPromptPlugin, { type CustomPromptOptions } from 'dsh-awesome-optimizer/custom-prompt';
 import persistentEvalPlugin, {
   applyPersistentEval,
@@ -30,7 +34,16 @@ const config: AgentOptimizerConfig = {
   readGuard: { enabled: true, maxLineChars: 1500, injectTailOutline: true, maxOutlineEntries: 20, maxCacheEntries: 32, maxCacheBytes: 262144, astOutline: 'auto', astTimeoutMs: 750, astMaxOutputBytes: 262144, astGrepCommand: 'ast-grep' },
   compositeTools: { enabled: true, findAndRead: true, maxPatterns: 5, defaultContextLines: 5, maxFiles: 5, maxWindows: 10, maxWindowLines: 120, maxReadLines: 600, readConcurrency: 3, maxPreflightBytes: 2097152 },
   persistentEval: { enabled: true, python: true, node: true, timeoutMs: 15000, sanitizeEnv: true, requireShellTool: true },
-  convergence: { enabled: true, injectGuidance: true, softStepBudget: 8 },
+  convergence: {
+    enabled: true,
+    mode: 'adaptive',
+    injectGuidance: true,
+    cooldownSteps: 6,
+    serialReadThreshold: 4,
+    longTailStepThreshold: 12,
+    stallStepsThreshold: 6,
+    softStepBudget: 8
+  },
   customPrompt: { enabled: true, placement: 'replace-all', includeCliFacts: false },
   telemetry: { enabled: true, trackStreams: true }
 };
@@ -50,7 +63,8 @@ const plugins: Plugin[] = [
 const convergenceNotice: MessageSource = {
   kind: 'optimizer-convergence',
   form: 'notice',
-  summary: 'Reassess remaining work.'
+  summary: 'Reassess remaining work.',
+  signal: 'serial-exploration'
 };
 
 const recoveryNotice: MessageSource = {
@@ -98,6 +112,9 @@ const subConfigs: [
     const editHints: number | undefined = summary.editRecovery?.hintsAttached;
     const compactions: number | undefined = summary.contextCompaction?.pressureCompactions;
     const reminders: number | undefined = summary.convergenceGuidance?.remindersSent;
+    const lastSignal: ConvergenceSignal | null | undefined = summary.convergenceGuidance?.lastSignal;
+    const lastStep: number | null | undefined = summary.convergenceGuidance?.lastReminderStep;
+    const serialCount: number | undefined = summary.convergenceGuidance?.signals['serial-exploration'];
     void rate;
     void counts;
     void cacheRead;
@@ -105,6 +122,9 @@ const subConfigs: [
     void editHints;
     void compactions;
     void reminders;
+    void lastSignal;
+    void lastStep;
+    void serialCount;
   } }
 ];
 
@@ -116,6 +136,7 @@ const workerExecOptions: StdioWorkerExecuteOptions = {
   signal: new AbortController().signal
 };
 
+void buildGuidance({ hasFindAndRead: false, hasEditBatch: true });
 void applyPersistentEval;
 void PY_WORKER_SCRIPT;
 void NODE_WORKER_SCRIPT;

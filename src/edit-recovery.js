@@ -1,6 +1,5 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import z from '@deepseek-ai/schemastery';
+import { getFsService, getWorkingDirectory, readFilePreflight } from './fs-preflight.js';
 
 export const EditRecoveryConfig = z.object({
   enabled: z.boolean().default(true),
@@ -416,114 +415,16 @@ export function buildEditFailureHint(content, oldString, options = {}) {
   return trimToMaxBytes(hint, maxHintBytes);
 }
 
-const UNAVAILABLE_FS = Object.freeze({});
-
-async function readBoundedLocalFile(resolvedPath, signal, maxBytes) {
-  let handle;
-  try {
-    handle = await fs.open(resolvedPath, 'r');
-    const stat = await handle.stat();
-    if (!stat.isFile() || stat.size > maxBytes || signal?.aborted) return null;
-    const chunks = [];
-    let size = 0;
-    const chunkSize = Math.min(65536, Math.max(stat.size + 1, 4096));
-    while (size <= maxBytes) {
-      if (signal?.aborted) return null;
-      const toRead = Math.min(chunkSize, maxBytes + 1 - size);
-      const buf = Buffer.allocUnsafe(toRead);
-      const { bytesRead } = await handle.read(buf, 0, toRead, null);
-      if (!bytesRead) break;
-      size += bytesRead;
-      if (size > maxBytes) return null;
-      chunks.push(bytesRead === buf.length ? buf : buf.subarray(0, bytesRead));
-    }
-    if (signal?.aborted || size > maxBytes) return null;
-    return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size));
-  } catch {
-    return null;
-  } finally {
-    await handle?.close().catch(() => {});
-  }
-}
-
 async function readTargetForRecovery(filePath, cwd, fsService, signal, maxInspectBytes) {
-  if (!filePath || typeof filePath !== 'string' || signal?.aborted) return null;
-
-  if (fsService) {
-    // A service failure is authoritative; never bypass sandbox or cancellation through local disk.
-    let target;
-    if (typeof fsService.resolve === 'function') {
-      try {
-        target = await fsService.resolve(filePath, { cwd, signal });
-      } catch {
-        return null;
-      }
-      if (signal?.aborted) return null;
-      if (typeof fsService.stat === 'function') {
-        try {
-          const info = await fsService.stat(target, signal);
-          if (signal?.aborted) return null;
-          if (info !== undefined) {
-            if (info.type !== undefined && info.type !== 'file') return null;
-            if (Number.isFinite(info.size) && (info.size < 0 || info.size > maxInspectBytes)) return null;
-          }
-        } catch {
-          return null;
-        }
-      }
-    }
-
-    if (typeof fsService.readBytes === 'function') {
-      try {
-        const bytes = await fsService.readBytes(target ?? filePath, signal, maxInspectBytes);
-        if (signal?.aborted || !bytes || bytes.byteLength > maxInspectBytes) return null;
-        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-      } catch {
-        return null;
-      }
-    }
-
-    if (typeof fsService.streamText === 'function') {
-      try {
-        const chunks = [];
-        let size = 0;
-        for await (const chunk of await fsService.streamText(target ?? filePath, signal)) {
-          if (signal?.aborted || typeof chunk !== 'string') return null;
-          size += Buffer.byteLength(chunk, 'utf8');
-          if (size > maxInspectBytes) return null;
-          chunks.push(chunk);
-        }
-        return chunks.join('');
-      } catch {
-        return null;
-      }
-    }
-
-    if (typeof fsService.readFile === 'function') {
-      try {
-        const content = await fsService.readFile(filePath, { cwd, signal, encoding: 'utf8' });
-        if (signal?.aborted || typeof content !== 'string') return null;
-        return Buffer.byteLength(content, 'utf8') <= maxInspectBytes ? content : null;
-      } catch {
-        return null;
-      }
-    }
-
-    if (typeof fsService.readText === 'function') {
-      try {
-        const content = await fsService.readText(target ?? filePath, signal);
-        if (signal?.aborted || typeof content !== 'string') return null;
-        return Buffer.byteLength(content, 'utf8') <= maxInspectBytes ? content : null;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  // Standalone hosts without an fs service may use a bounded local inspection.
-  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
-  return readBoundedLocalFile(resolved, signal, maxInspectBytes);
+  const probe = await readFilePreflight({
+    filePath,
+    cwd,
+    fsService,
+    signal,
+    maxBytes: maxInspectBytes,
+    allowReadFile: true
+  });
+  return probe.ok ? probe.content : null;
 }
 
 /**
@@ -579,20 +480,8 @@ export function applyEditRecovery(ctx, rawConfig = {}) {
 
     if (stats) stats.inspected++;
 
-    let fsService;
-    try {
-      fsService = ctx.get ? ctx.get('fs') : undefined;
-    } catch {
-      // An unavailable/denied service is not permission to bypass it.
-      fsService = UNAVAILABLE_FS;
-    }
-    let cwd = '';
-    try {
-      const cwdService = ctx.get ? ctx.get('workingDirectory') : undefined;
-      cwd = cwdService?.get?.(session) ?? '';
-    } catch {
-      cwd = '';
-    }
+    const fsService = getFsService(ctx);
+    const cwd = getWorkingDirectory(ctx, session);
 
     const content = await readTargetForRecovery(
       args.file_path,

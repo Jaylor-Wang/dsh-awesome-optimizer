@@ -19,7 +19,15 @@ const IDENTIFIER = '[\\p{ID_Start}_$][\\p{ID_Continue}$]*';
 const jsFunction = new RegExp(`^(export\\s+(?:default\\s+)?)?(?:declare\\s+)?(async\\s+)?function\\s*\\*?\\s*(${IDENTIFIER})`, 'u');
 const jsType = new RegExp(`^(export\\s+(?:default\\s+)?)?(?:declare\\s+)?(?:abstract\\s+)?(class|interface|type|enum)\\s+(${IDENTIFIER})`, 'u');
 const jsVariable = new RegExp(`^(export\\s+)?(?:const|let|var)\\s+(${IDENTIFIER})(?:\\s*:[^=;]+)?\\s*=\\s*(async\\s+)?`, 'u');
+const jsSingleArrow = new RegExp(`^(${IDENTIFIER})\\s*=>`, 'u');
 const jsMethod = new RegExp(`^(?:(?:public|private|protected|static|readonly|override|abstract|get|set|async)\\s+)*\\*?\\s*(#?${IDENTIFIER})\\s*(?:<[^;{}]*>)?\\s*\\(`, 'u');
+const pyDef = new RegExp(`^(async\\s+)?def\\s+(${IDENTIFIER})(?:\\[[^\\]]+\\])?\\s*\\(`, 'u');
+const pyClass = new RegExp(`^class\\s+(${IDENTIFIER})(?:\\[[^\\]]+\\])?`, 'u');
+const goFunc = /^func\s+(?:\([^)]*\)\s*)?([\p{ID_Start}_][\p{ID_Continue}_]*)(?:\[[^\]]+\])?\s*\(/u;
+const goType = /^type\s+([\p{ID_Start}_][\p{ID_Continue}_]*)(?:\[[^\]]+\])?\s+(struct|interface)/u;
+const rustFn = /^(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|unsafe|const|extern)\s+)*(fn\s+[\p{ID_Start}_][\p{ID_Continue}_]*(?:<[^;{}]*>)?\s*)\(/u;
+const rustType = /^(?:pub(?:\([^)]*\))?\s+)?(?:(?:unsafe|auto)\s+)?(?:struct|enum|trait)\s+[\p{ID_Start}_][\p{ID_Continue}_]*/u;
+const rustImpl = /^(?:unsafe\s+)?impl(?:<[^;{}]*>)?\s+[^{}]+/;
 
 function scanDeclarations(content, language) {
   const masked = maskCode(content, language);
@@ -38,10 +46,10 @@ function scanDeclarations(content, language) {
       let cursor = from;
       while (/\s/.test(header[cursor] ?? '') && cursor < header.length) cursor++;
       if (header[cursor] === '<') {
-        let depth = 1;
-        while (++cursor < header.length && depth > 0) {
-          if (header[cursor] === '<') depth++;
-          else if (header[cursor] === '>' && header[cursor - 1] !== '=') depth--;
+        let angleDepth = 1;
+        while (++cursor < header.length && angleDepth > 0) {
+          if (header[cursor] === '<') angleDepth++;
+          else if (header[cursor] === '>' && header[cursor - 1] !== '=') angleDepth--;
         }
       }
       while (/\s/.test(header[cursor] ?? '') && cursor < header.length) cursor++;
@@ -71,7 +79,7 @@ function scanDeclarations(content, language) {
             if (signature && (expression || /^(?:\s*:\s*[^;=]+)?\s*=>/.test(header.slice(signature.end + 1, signature.end + 1024)))) push(signature.text);
             else if (match[1]) push(prefix);
           } else {
-            const single = rest.match(new RegExp(`^(${IDENTIFIER})\\s*=>`, 'u'));
+            const single = rest.match(jsSingleArrow);
             if (single) push(`${prefix} = ${match[3] ? 'async ' : ''}(${single[1]})`);
             else if (match[1]) push(prefix);
           }
@@ -80,10 +88,10 @@ function scanDeclarations(content, language) {
           if (signature && /^\s*(?::[^;=]+)?\s*\{/.test(header.slice(signature.end + 1, signature.end + 1024))) push(signature.text, true);
         }
       } else if (language === 'py') {
-        if (matches(new RegExp(`^(async\\s+)?def\\s+(${IDENTIFIER})(?:\\[[^\\]]+\\])?\\s*\\(`, 'u'))) {
+        if (matches(pyDef)) {
           const signature = params(`${match[1] ? 'async ' : ''}def ${match[2]}`, match[0].length - 1);
           if (signature) push(signature.text);
-        } else if (matches(new RegExp(`^class\\s+(${IDENTIFIER})(?:\\[[^\\]]+\\])?`, 'u'))) {
+        } else if (matches(pyClass)) {
           const rest = header.slice(match[0].length);
           if (/^\s*\(/.test(rest)) {
             const signature = params(`class ${match[1]}`, match[0].length);
@@ -91,18 +99,18 @@ function scanDeclarations(content, language) {
           } else if (/^\s*:/.test(rest)) push(`class ${match[1]}`);
         }
       } else if (language === 'go') {
-        if (matches(/^func\s+(?:\([^)]*\)\s*)?([\p{ID_Start}_][\p{ID_Continue}_]*)(?:\[[^\]]+\])?\s*\(/u)) {
+        if (matches(goFunc)) {
           const open = match[0].lastIndexOf('(');
           const end = parameterEnd(header, open);
           if (end >= 0) { push(content.slice(start, start + end + 1)); skipUntil = start + end; }
-        } else if (matches(/^type\s+([\p{ID_Start}_][\p{ID_Continue}_]*)(?:\[[^\]]+\])?\s+(struct|interface)/u)) push(`type ${match[1]} ${match[2]}`);
+        } else if (matches(goType)) push(`type ${match[1]} ${match[2]}`);
       } else if (language === 'rust') {
-        if (matches(/^(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|unsafe|const|extern)\s+)*(fn\s+[\p{ID_Start}_][\p{ID_Continue}_]*(?:<[^;{}]*>)?\s*)\(/u)) {
+        if (matches(rustFn)) {
           const open = match[0].lastIndexOf('(');
           const end = parameterEnd(header, open);
           if (end >= 0) { push(content.slice(start, start + end + 1)); skipUntil = start + end; }
-        } else if (matches(/^(?:pub(?:\([^)]*\))?\s+)?(?:(?:unsafe|auto)\s+)?(?:struct|enum|trait)\s+[\p{ID_Start}_][\p{ID_Continue}_]*/u)) push(match[0]);
-        else if (matches(/^(?:unsafe\s+)?impl(?:<[^;{}]*>)?\s+[^{}]+/)) push(match[0]);
+        } else if (matches(rustType)) push(match[0]);
+        else if (matches(rustImpl)) push(match[0]);
       }
     }
     if (language !== 'py') for (const char of line) {
@@ -114,17 +122,32 @@ function scanDeclarations(content, language) {
   return entries;
 }
 
+function detectLanguage(filePath, content = '') {
+  if (typeof filePath !== 'string' || !filePath.trim()) return 'js';
+  const ext = path.extname(filePath).toLowerCase();
+  if (PY_EXTS.has(ext)) return 'py';
+  if (GO_EXTS.has(ext)) return 'go';
+  if (RS_EXTS.has(ext)) return 'rust';
+  if (JS_TS_EXTS.has(ext)) return 'js';
+  if (!ext && typeof content === 'string' && content.startsWith('#!')) {
+    const firstLine = content.slice(0, 128).split('\n', 1)[0];
+    if (/\bpython3?\b/.test(firstLine)) return 'py';
+    if (/\b(?:node|deno|bun|tsx|ts-node)\b/.test(firstLine)) return 'js';
+  }
+  return null;
+}
+
 /** Check language support without reading file contents. */
 export function supportsCodeOutline(filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) return false;
   const ext = path.extname(filePath).toLowerCase();
-  return !ext || JS_TS_EXTS.has(ext) || PY_EXTS.has(ext) || GO_EXTS.has(ext) || RS_EXTS.has(ext);
+  return JS_TS_EXTS.has(ext) || PY_EXTS.has(ext) || GO_EXTS.has(ext) || RS_EXTS.has(ext);
 }
 
 /** Extract lightweight symbols with 1-based line numbers. */
 export function extractCodeOutline(content, { filePath = '', startLine = 1, endLine = Infinity } = {}) {
   if (typeof content !== 'string' || !content) return [];
-  const ext = path.extname(filePath).toLowerCase();
-  const language = PY_EXTS.has(ext) ? 'py' : GO_EXTS.has(ext) ? 'go' : RS_EXTS.has(ext) ? 'rust' : JS_TS_EXTS.has(ext) || !ext ? 'js' : null;
+  const language = detectLanguage(filePath, content);
   if (!language) return [];
   return scanDeclarations(content, language).filter(item => item.line >= startLine && item.line <= endLine);
 }

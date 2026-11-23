@@ -1,12 +1,28 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import z from '@deepseek-ai/schemastery';
 import { extractCodeOutline, formatCodeOutline, formatOutlineEntries, supportsCodeOutline } from './code-outline.js';
 import { buildAdaptiveOutline } from './ast-outline.js';
 import { OutlineCache } from './outline-cache.js';
+import {
+  UNAVAILABLE_FS,
+  getFsService,
+  getWorkingDirectory,
+  readBoundedLocalFile,
+  readFsContent
+} from './fs-preflight.js';
 
 export { extractCodeOutline, formatCodeOutline };
 export const READ_GUARD_SOURCE = 'optimizer-read-guard';
+
+const INVALIDATING_TOOLS = new Set([
+  'write',
+  'edit',
+  'edit_batch',
+  'retry_failed_write',
+  'bash',
+  'eval_node',
+  'eval_python'
+]);
 
 export const ReadGuardConfig = z.object({
   enabled: z.boolean().default(true),
@@ -92,29 +108,18 @@ async function readTargetSafely(filePath, cwd, fsService, signal, config, cache,
       } else if (stats) {
         stats.outlineCacheBypasses++;
       }
-      let content;
-      if (typeof fsService.readBytes === 'function') {
-        const bytes = await fsService.readBytes(target, signal, maxInspectBytes);
-        if (signal?.aborted || bytes.byteLength > maxInspectBytes) return null;
-        content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-      } else if (typeof fsService.streamText === 'function') {
-        const chunks = [];
-        let size = 0;
-        for await (const chunk of await fsService.streamText(target, signal)) {
-          if (signal?.aborted || typeof chunk !== 'string') return null;
-          size += Buffer.byteLength(chunk, 'utf8');
-          if (size > maxInspectBytes) return null;
-          chunks.push(chunk);
-        }
-        content = chunks.join('');
-      } else if (typeof fsService.readText === 'function') {
-        // Compatibility with older services: only after a successful size preflight.
-        content = await fsService.readText(target, signal);
-      } else {
-        return null;
-      }
-      if (signal?.aborted || cache?.generation !== generation || typeof content !== 'string' || Buffer.byteLength(content, 'utf8') > maxInspectBytes) return null;
-      const outline = await buildAdaptiveOutline(content, filePath, config, signal, stats);
+
+      const probe = await readFsContent(fsService, {
+        filePath,
+        cwd,
+        target,
+        signal,
+        maxBytes: maxInspectBytes,
+        allowReadFile: false
+      });
+      if (!probe.ok || signal?.aborted || cache?.generation !== generation) return null;
+
+      const outline = await buildAdaptiveOutline(probe.content, filePath, config, signal, stats);
       if (signal?.aborted || cache?.generation !== generation) return null;
       if (key && version) {
         const after = await fsService.stat(target, signal);
@@ -127,30 +132,18 @@ async function readTargetSafely(filePath, cwd, fsService, signal, config, cache,
     }
   }
 
-  // Standalone hosts without an fs service still get a bounded local read.
-  let handle;
-  try {
-    const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
-    handle = await fs.open(resolved, 'r');
-    const stat = await handle.stat();
-    if (!stat.isFile() || stat.size > maxInspectBytes || signal?.aborted || cache?.generation !== generation) return null;
-    if (stats) stats.outlineCacheBypasses++;
-    const buffer = Buffer.alloc(maxInspectBytes + 1);
-    let size = 0;
-    while (size < buffer.length) {
-      if (signal?.aborted) return null;
-      const { bytesRead } = await handle.read(buffer, size, buffer.length - size, null);
-      if (!bytesRead) break;
-      size += bytesRead;
+  // Standalone hosts without an fs service still get a bounded chunked local read.
+  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd || process.cwd(), filePath);
+  const probe = await readBoundedLocalFile(resolved, signal, maxInspectBytes, {
+    onBeforeRead() {
+      if (cache?.generation !== generation) return false;
+      if (stats) stats.outlineCacheBypasses++;
+      return true;
     }
-    if (signal?.aborted || cache?.generation !== generation || size > maxInspectBytes) return null;
-    const outline = await buildAdaptiveOutline(new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, size)), filePath, config, signal, stats);
-    return signal?.aborted || cache?.generation !== generation ? null : outline;
-  } catch {
-    return null;
-  } finally {
-    await handle?.close().catch(() => {});
-  }
+  });
+  if (!probe.ok || signal?.aborted || cache?.generation !== generation) return null;
+  const outline = await buildAdaptiveOutline(probe.content, filePath, config, signal, stats);
+  return signal?.aborted || cache?.generation !== generation ? null : outline;
 }
 
 /**
@@ -248,7 +241,7 @@ export function applyReadGuard(ctx, rawConfig = {}) {
     const session = exec.agent?.session;
     if (disposed || (session && disposedSessions.has(session))) return decision;
     // Invalidate conservatively even for failed/partially successful composite mutations.
-    if (['write', 'edit', 'edit_batch', 'bash', 'eval_node', 'eval_python'].includes(exec?.name)) {
+    if (INVALIDATING_TOOLS.has(exec?.name)) {
       if (clearCaches(session)) {
         const stats = statsFor(session);
         if (stats) stats.outlineCacheInvalidations++;
@@ -295,22 +288,9 @@ export function applyReadGuard(ctx, rawConfig = {}) {
         const { prefix, body, suffix } = splitEnvelope(updatedBlocks[firstTextIdx].text);
         const trunc = detectTruncation(body, result.meta);
         if (trunc) {
-          let cwd = '';
-          try {
-            cwd = ctx.get('workingDirectory')?.get?.(session) ?? '';
-          } catch {
-            cwd = '';
-          }
-          let fsService;
-          let fsUnavailable = false;
-          try {
-            fsService = ctx.get('fs');
-          } catch {
-            // An unavailable/denied service is not permission to bypass it.
-            fsUnavailable = true;
-          }
-
-          const parsed = fsUnavailable
+          const cwd = getWorkingDirectory(ctx, session);
+          const fsService = getFsService(ctx);
+          const parsed = fsService === UNAVAILABLE_FS
             ? null
             : await readTargetSafely(args.file_path, cwd, fsService, exec.signal, config, cacheFor(session, fsService), stats);
           if (parsed !== null && !exec.signal?.aborted && !disposed && !(session && disposedSessions.has(session))) {

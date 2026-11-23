@@ -70,15 +70,15 @@ test('cache cannot hide stat denial or survive local mutations', async () => {
   host.service.stat = async () => { throw new Error('EACCES'); };
   assert.doesNotMatch(await host.inspect(), /Remaining file outline/);
   host.service.stat = originalStat;
-  for (const name of ['edit', 'write', 'edit_batch', 'bash', 'eval_node', 'eval_python']) {
+  for (const name of ['edit', 'write', 'edit_batch', 'retry_failed_write', 'bash', 'eval_node', 'eval_python']) {
     await host.mutate(name);
     await host.inspect();
   }
-  assert.equal(host.reads(), 7);
+  assert.equal(host.reads(), 8);
   const stats = host.guard.getStats(host.session);
-  assert.equal(stats.outlineCacheLookups, 7);
-  assert.equal(stats.outlineCacheMisses, 7);
-  assert.equal(stats.outlineCacheInvalidations, 6);
+  assert.equal(stats.outlineCacheLookups, 8);
+  assert.equal(stats.outlineCacheMisses, 8);
+  assert.equal(stats.outlineCacheInvalidations, 7);
 });
 
 test('cache rejects a version race and invalidation during an in-flight read', async () => {
