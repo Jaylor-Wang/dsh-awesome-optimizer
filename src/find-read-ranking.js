@@ -9,7 +9,7 @@ const RS_EXTS = new Set(['.rs']);
 const JS_DECL_PATTERNS = [
   /^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function(?:\s*\*\s*|\s+)([A-Za-z_$][A-Za-z0-9_$]*)\s*(?=\(|<)/,
   /^\s*(?:export\s+(?:default\s+)?)?(?:abstract\s+)?(?:class|interface|type|enum)\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/,
-  /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:[^=;]+)?\s*=\s*(?:async\s+)?(?:(?:<[^;{}]+>\s*)?\(|function(?:\s*\*)?(?:\s+[A-Za-z_$][A-Za-z0-9_$]*)?\s*\(|[A-Za-z_$][A-Za-z0-9_$]*\s*=>)/
+  /^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:[^=;]+)?\s*=\s*(?:async\s+)?(?:(?:<[^;{}]+>\s*)?\((?:[^()]+|\([^()]*\))*\)(?:\s*:[^{;=]+)?\s*=>|function(?:\s*\*)?(?:\s+[A-Za-z_$][A-Za-z0-9_$]*)?\s*\(|[A-Za-z_$][A-Za-z0-9_$]*\s*=>)/
 ];
 const PY_DECL_PATTERNS = [
   /^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]+\])?\s*\(/,

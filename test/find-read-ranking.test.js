@@ -145,6 +145,7 @@ test('declaration ranking supports TS classes/arrows and Python, Go, and Rust de
   const cases = [
     ['ref.ts', 'const x = new PolicyEngine();', 'def.ts', 'PolicyEngine', 'export class PolicyEngine {'],
     ['ref.ts', 'const y = computeScore(1);', 'def.ts', 'computeScore', 'export const computeScore = (n: number) => n * 2;'],
+    ['ref.ts', 'const z = buildItem();', 'def.ts', 'buildItem', 'export const buildItem = (a = make(1)): number => a;'],
     ['ref.py', 'result = build_index(items)', 'def.py', 'build_index', 'async def build_index(items):'],
     ['ref.go', 'worker.RunTask(ctx)', 'def.go', 'RunTask', 'func (w *Worker) RunTask(ctx Context) error {'],
     ['ref.rs', 'let s = parse_frame(buf);', 'def.rs', 'parse_frame', 'pub async fn parse_frame(buf: &[u8]) -> Frame {'],
@@ -158,5 +159,21 @@ test('declaration ranking supports TS classes/arrows and Python, Go, and Rust de
       { maxFiles: 1, maxWindows: 1, maxReadLines: 3 }
     );
     assert.equal(chosen[0].file.displayPath, defPath, `Expected ${defPath} declaration to beat ${refPath} for ${symbol}`);
+  }
+
+  // Non-arrow parenthesized assignments and indented local const mocks must NOT be treated as declarations
+  for (const [symbol, falseDecl] of [
+    ['total', 'const total = (a + b) * c;'],
+    ['payload', 'const payload = (await fetch(url));'],
+    ['cfg', 'const cfg = ({ retries: 3 });'],
+    ['verifyToken', '  const verifyToken = () => true;']
+  ]) {
+    const a = file('a.ts', [[1, [symbol], `use(${symbol});`]]);
+    const b = file('b.ts', [[1, [symbol], falseDecl]]);
+    const chosen = selectReadWindows(
+      [task(b, 1, 1, [1]), task(a, 1, 1, [1])],
+      { maxFiles: 1, maxWindows: 1, maxReadLines: 1 }
+    );
+    assert.equal(chosen[0].file, a, `False declaration "${falseDecl}" must not outrank a.ts`);
   }
 });
