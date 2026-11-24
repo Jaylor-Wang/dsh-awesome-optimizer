@@ -1,4 +1,5 @@
 import path from 'node:path';
+import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { detectPythonEnv } from '../custom-prompt.js';
 import { StdioWorkerRunner } from './stdio-runner.js';
@@ -107,7 +108,7 @@ export class DaemonPool {
 
     if (!sessionMap.node || sessionMap.node.isDestroyed) {
       sessionMap.node = new StdioWorkerRunner({
-        command: 'node',
+        command: process.execPath,
         args: [NODE_WORKER_SCRIPT],
         timeoutMs: this.config.timeoutMs,
         maxOutputBytes: this.config.maxOutputBytes,

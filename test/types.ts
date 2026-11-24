@@ -2,6 +2,7 @@ import type { Plugin } from '@deepseek-ai/cordis';
 import type { MessageSource } from '@deepseek-ai/dsh-llm';
 import optimizer, {
   type AgentOptimizerConfig,
+  type ContextCompactionStats,
   type TurnTelemetrySummary,
   compareTurnSummaries
 } from 'dsh-awesome-optimizer';
@@ -111,6 +112,7 @@ const subConfigs: [
     const coverage: number = summary.cacheUsageCoverage.readReported;
     const editHints: number | undefined = summary.editRecovery?.hintsAttached;
     const compactions: number | undefined = summary.contextCompaction?.pressureCompactions;
+    const compactionStats: ContextCompactionStats | null = summary.contextCompaction;
     const reminders: number | undefined = summary.convergenceGuidance?.remindersSent;
     const lastSignal: ConvergenceSignal | null | undefined = summary.convergenceGuidance?.lastSignal;
     const lastStep: number | null | undefined = summary.convergenceGuidance?.lastReminderStep;
@@ -121,6 +123,7 @@ const subConfigs: [
     void coverage;
     void editHints;
     void compactions;
+    void compactionStats;
     void reminders;
     void lastSignal;
     void lastStep;

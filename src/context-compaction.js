@@ -73,12 +73,12 @@ export function applyContextCompaction(ctx, rawConfig = {}) {
         const advanced = Number.isFinite(generation)
           && agent.session?.surface?.replaceGeneration > generation;
         if (result || advanced) overflowCompactions++;
-        if (!signal?.aborted && advanced) return { kind: 'retry' };
+        if (!disposed && !signal?.aborted && advanced) return { kind: 'retry' };
       } catch (error) {
         if (!signal?.aborted) {
           failures++;
           log(ctx, 'warn', `overflow recovery failed: ${error instanceof Error ? error.message : String(error)}`);
-          if (Number.isFinite(generation) && agent.session?.surface?.replaceGeneration > generation) {
+          if (!disposed && Number.isFinite(generation) && agent.session?.surface?.replaceGeneration > generation) {
             overflowCompactions++;
             return { kind: 'retry' };
           }

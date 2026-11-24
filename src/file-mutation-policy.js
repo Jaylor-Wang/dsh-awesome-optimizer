@@ -8,7 +8,7 @@ export const MUTATION_SOURCE = 'optimizer-file-mutation-policy';
 export const FileMutationPolicyConfig = z.object({
   mode: z.union(['off', 'observe', 'enforce']).default('observe'),
   minLargeWriteBytes: z.number().step(1).min(1).default(8192),
-  reminderLimit: z.number().step(1).min(1).default(1),
+  reminderLimit: z.number().step(1).min(1),
   allowFullReplacement: z.any()
 });
 
@@ -23,7 +23,7 @@ export async function fileExists(filePath, cwd = '', fsService, signal) {
       const target = await fsService.resolve(filePath, { cwd, signal });
       if (typeof fsService.stat === 'function') {
         const info = await fsService.stat(target, signal);
-        return info !== undefined;
+        return info != null;
       }
       return target !== undefined;
     } catch {
@@ -57,6 +57,7 @@ export class FileMutationPolicyManager {
       knownExistingFiles: new Set(),
       createdFiles: new Set(),
       pendingCreates: new Map(),
+      recordedEditBatchParents: new Set(),
       largeWriteViolations: 0,
       largeWritesBlocked: 0,
       fullReplacementsAllowed: 0,
@@ -96,6 +97,7 @@ export class FileMutationPolicyManager {
   onTurnEnd(session) {
     const state = this.sessionStates.get(session);
     state?.pendingCreates.clear();
+    state?.recordedEditBatchParents.clear();
   }
 
   onCwdChange(session, newCwd) {
@@ -106,6 +108,7 @@ export class FileMutationPolicyManager {
     state.knownExistingFiles.clear();
     state.createdFiles.clear();
     state.pendingCreates.clear();
+    state.recordedEditBatchParents.clear();
   }
 
   async evaluateToolExecution(session, exec, toolsService, fsService = this.fsService) {
@@ -149,8 +152,13 @@ export class FileMutationPolicyManager {
       return { allowed: true, reason: 'below-size-threshold' };
     }
 
-    if (toolsService && toolsService.get && toolsService.get('edit', exec.agent) === undefined) {
-      return { allowed: true, reason: 'no-edit-available' };
+    if (toolsService && typeof toolsService.get === 'function') {
+      const editTool = exec.toolSet !== undefined
+        ? toolsService.get('edit', exec.agent, exec.toolSet)
+        : toolsService.get('edit', exec.agent);
+      if (editTool === undefined) {
+        return { allowed: true, reason: 'no-edit-available' };
+      }
     }
 
     let hostApprovedReplacement = false;
@@ -205,10 +213,28 @@ export class FileMutationPolicyManager {
       return;
     } else if (exec.name === 'edit') {
       state.editsCount++;
+      if (exec.parent !== undefined) {
+        state.recordedEditBatchParents.add(exec.parent);
+      }
       if (typeof args.file_path === 'string') {
         const filePath = normalizePath(args.file_path, state.cwd);
         state.observedFiles.add(filePath);
         state.knownExistingFiles.add(filePath);
+      }
+    } else if (exec.name === 'edit_batch') {
+      const alreadyRecorded = exec.token !== undefined && state.recordedEditBatchParents.delete(exec.token);
+      const items = Array.isArray(args.edits) ? args.edits : [];
+      if (!alreadyRecorded) {
+        let count = 0;
+        for (const item of items) {
+          if (typeof item?.file_path === 'string' && item.file_path.trim()) {
+            const filePath = normalizePath(item.file_path, state.cwd);
+            state.observedFiles.add(filePath);
+            state.knownExistingFiles.add(filePath);
+            count++;
+          }
+        }
+        state.editsCount += count;
       }
     } else if (['read', 'read_image'].includes(exec.name)) {
       if (typeof args.file_path === 'string') {
@@ -216,7 +242,7 @@ export class FileMutationPolicyManager {
         state.observedFiles.add(filePath);
         state.knownExistingFiles.add(filePath);
       }
-    } else if (['grep', 'glob'].includes(exec.name)) {
+    } else if (['grep', 'glob', 'find_and_read'].includes(exec.name)) {
       if (typeof args.path === 'string') {
         state.observedFiles.add(normalizePath(args.path, state.cwd));
       }

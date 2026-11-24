@@ -80,3 +80,35 @@ test('context compaction preserves the original overflow failure without durable
   assert.equal(host.service.getStats().overflowAttempts, 1);
   assert.equal(host.service.getStats().overflowCompactions, 0);
 });
+
+test('context compaction does not retry overflow if disposed while compaction is in flight', async () => {
+  const hooks = new Map();
+  let resolveCompaction;
+  const ctx = {
+    on(name, callback) { hooks.set(name, callback); },
+    get(name) {
+      if (name !== 'compaction') return undefined;
+      return {
+        compactIfNeeded(agent) {
+          return new Promise(resolve => {
+            resolveCompaction = () => {
+              agent.session.surface.replaceGeneration++;
+              resolve({ shadowedSeqs: ['seq-1'] });
+            };
+          });
+        }
+      };
+    }
+  };
+  applyContextCompaction(ctx);
+  const agent = { session: { surface: { replaceGeneration: 0 } } };
+  const pending = hooks.get('agent/request-error')({
+    agent,
+    failure: { code: 'CONTEXT_WINDOW_EXCEEDED' },
+    signal: new AbortController().signal
+  }, async () => ({ kind: 'reject' }));
+
+  hooks.get('dispose')();
+  resolveCompaction();
+  assert.deepEqual(await pending, { kind: 'reject' });
+});

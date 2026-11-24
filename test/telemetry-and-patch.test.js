@@ -313,3 +313,39 @@ test('agentTelemetry detects replacement, in-place and cross-turn prefix changes
   for await (const _ of manager.wrapStream({ sessionId: session.id, messages: [mutatedMsg1, msg2] }, emptyStream)) {}
   assert.equal(manager.getSummary(session).prefixChanges, 1);
 });
+
+test('agentTelemetry.getSummary tolerates throwing ctx.get lookups without breaking summary or callback', () => {
+  let receivedSummary = null;
+  const ctx = {
+    get(key) {
+      if (key === 'readGuard' || key === 'runtimePolicy') {
+        throw new Error(`service ${key} unavailable`);
+      }
+      if (key === 'contextCompaction') {
+        return { getStats: () => ({ pressureAttempts: 2, pressureCompactions: 1, overflowAttempts: 0, overflowCompactions: 0, failures: 0 }) };
+      }
+      return undefined;
+    }
+  };
+  const manager = new AgentTelemetryManager(ctx, {
+    onTurnSummary(summary) {
+      receivedSummary = summary;
+    }
+  });
+  const session = { id: 'throwing-ctx-session' };
+  manager.onSessionEvent(session, { type: 'turn/start', data: { turn: 1 } });
+  manager.onSessionEvent(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } });
+
+  const summary = manager.getSummary(session, 1);
+  assert.equal(summary.runtimePolicy, null);
+  assert.equal(summary.readGuard, null);
+  assert.deepEqual(summary.contextCompaction, {
+    pressureAttempts: 2,
+    pressureCompactions: 1,
+    overflowAttempts: 0,
+    overflowCompactions: 0,
+    failures: 0
+  });
+  assert.ok(receivedSummary);
+  assert.equal(receivedSummary.turnOutcome, 'completed');
+});

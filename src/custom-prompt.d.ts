@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis';
-import z from '@deepseek-ai/schemastery';
+import type z from '@deepseek-ai/schemastery';
 
 export declare const name: 'agent-optimizer-custom-prompt';
 export declare const inject: ['systemPrompt'];

@@ -174,6 +174,17 @@ export class StdioWorkerRunner {
         if (this.child !== child) return;
         this._handleProcessFailure(err);
       });
+      child.stdin.on('error', err => {
+        if (this.child !== child) return;
+        if (this.isDestroyed || this.currentTask?.killedByWatchdog) return;
+        if (err?.code === 'EPIPE' || err?.code === 'EOF' || err?.code === 'ERR_STREAM_DESTROYED') {
+          if (child.exitCode === null && child.signalCode === null && !child.killed) {
+            this._forceKill(child);
+          }
+          return;
+        }
+        this._handleProcessFailure(err);
+      });
       child.on('exit', (code, signal) => {
         if (this.child !== child) return;
         this._handleProcessExit(code, signal);
@@ -268,6 +279,28 @@ export class StdioWorkerRunner {
     response.stderr = task.stderrTruncated
       ? truncateUtf8(`${stderrText}${stderrSuffix}`, limit, stderrSuffix)
       : truncateUtf8(stderrText, limit, stderrSuffix);
+    const resultSuffix = `\n\n[Output truncated: result exceeded ${limit} bytes.]`;
+    if (typeof response.resultRepr === 'string' && byteLength(response.resultRepr) > limit) {
+      response.resultRepr = truncateUtf8(response.resultRepr, limit, resultSuffix);
+    }
+    if (typeof response.result === 'string' && byteLength(response.result) > limit) {
+      response.result = truncateUtf8(response.result, limit, resultSuffix);
+    } else if (response.result !== null && response.result !== undefined && typeof response.result === 'object') {
+      try {
+        const encoded = JSON.stringify(response.result);
+        if (encoded !== undefined && byteLength(encoded) > limit) {
+          const fallback = typeof response.resultRepr === 'string' && response.resultRepr
+            ? truncateUtf8(response.resultRepr, limit, resultSuffix)
+            : truncateUtf8(encoded, limit, resultSuffix);
+          response.result = fallback;
+          response.resultRepr = fallback;
+        }
+      } catch {
+        const fallback = truncateUtf8(String(response.result), limit, resultSuffix);
+        response.result = fallback;
+        response.resultRepr = fallback;
+      }
+    }
     task.resolve(response);
   }
 

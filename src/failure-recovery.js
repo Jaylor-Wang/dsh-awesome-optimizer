@@ -90,7 +90,6 @@ export function applyFailureRecovery(ctx, { enabled = true, maxAttempts = 1 } = 
   if (!enabled) return null;
   const attemptsLimit = Math.min(1, Math.max(1, Math.floor(Number.isFinite(maxAttempts) ? maxAttempts : 1)));
   const states = new WeakMap();
-  const candidates = new Map();
   const pipeline = new ToolExecutionPipeline(ctx);
 
   const getStats = session => {
@@ -112,13 +111,14 @@ export function applyFailureRecovery(ctx, { enabled = true, maxAttempts = 1 } = 
         rootResults: 0,
         concluded: false,
         record: undefined,
+        candidates: new Map(),
         stats: { attempted: 0, succeeded: 0, failed: 0, invalidated: 0 }
       });
     }
     const state = states.get(session);
     if (!state) return;
     if (event.type === 'turn/end') {
-      candidates.clear();
+      state.candidates.clear();
       if (state.record) {
         state.record.invalidate('turn-end');
         state.stats.invalidated++;
@@ -158,17 +158,20 @@ export function applyFailureRecovery(ctx, { enabled = true, maxAttempts = 1 } = 
   ctx.on('tools/execute', async (exec, next) => {
     const result = await next();
     if (exec.agent && eligible(exec, result)) {
-      candidates.set(exec.token, ctx.tools.executable('write', exec.agent, exec.toolSet));
+      const state = states.get(exec.agent.session);
+      if (state) {
+        state.candidates.set(exec.token, ctx.tools.executable('write', exec.agent, exec.toolSet));
+      }
     }
     return result;
   });
 
   ctx.on('tools/result', (exec, result) => {
-    const definition = candidates.get(exec.token);
-    candidates.delete(exec.token);
     if (!exec.agent || exec.parent !== undefined) return;
     const state = states.get(exec.agent.session);
     if (!state) return;
+    const definition = state.candidates.get(exec.token);
+    state.candidates.delete(exec.token);
     state.rootResults++;
     state.concluded ||= result.concludesTurn === true;
     if (!definition || !eligible(exec, result)) return;

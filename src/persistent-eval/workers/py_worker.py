@@ -82,9 +82,36 @@ def execute_code(code, scope):
         exec(compile(parsed, filename="<eval_kernel>", mode="exec"), scope)
         return None
 
-def serialize_result(result):
+def truncate_utf8(text, max_bytes, label):
+    max_bytes = max(0, int(max_bytes))
+    text = str(text)
+    if len(text.encode('utf-8')) <= max_bytes:
+        return text
+    if max_bytes <= 0:
+        return ''
+    suffix = f"\n\n[Output truncated: {label} exceeded {max_bytes} bytes.]"
+    if len(suffix.encode('utf-8')) >= max_bytes:
+        suffix = "\n[Output truncated]"
+    suffix_bytes = len(suffix.encode('utf-8'))
+    if suffix_bytes >= max_bytes:
+        encoded = text.encode('utf-8')[:max_bytes]
+        while encoded and (encoded[-1] & 0xc0) == 0x80:
+            encoded = encoded[:-1]
+        return encoded.decode('utf-8', errors='ignore')
+    available = max_bytes - suffix_bytes
+    encoded = text.encode('utf-8')[:available]
+    while encoded and (encoded[-1] & 0xc0) == 0x80:
+        encoded = encoded[:-1]
+    return encoded.decode('utf-8', errors='ignore') + suffix
+
+
+def serialize_result(result, max_bytes=8192):
     if result is None:
         return None, None
+    max_bytes = max(0, int(max_bytes))
+    if isinstance(result, str) and len(result.encode('utf-8')) > max_bytes:
+        bounded = truncate_utf8(repr(result[:max_bytes + 64]), max_bytes, 'result')
+        return bounded, bounded
     if isinstance(result, float):
         if math.isfinite(result):
             rounded = round(result, 10)
@@ -96,9 +123,15 @@ def serialize_result(result):
             result_repr = repr(result)
     else:
         result_repr = repr(result)
+    if len(result_repr.encode('utf-8')) > max_bytes:
+        bounded = truncate_utf8(result_repr, max_bytes, 'result')
+        return bounded, bounded
     try:
         # Require strict RFC 8259 JSON so NaN/Infinity never break Node JSON.parse
-        json.dumps(result, allow_nan=False)
+        encoded = json.dumps(result, ensure_ascii=False, allow_nan=False)
+        if len(encoded.encode('utf-8')) > max_bytes:
+            bounded = truncate_utf8(encoded, max_bytes, 'result')
+            return bounded, bounded
         return result, result_repr
     except (TypeError, OverflowError, ValueError):
         # Fall back to string representation (covers non-finite floats and custom objects)
@@ -210,7 +243,7 @@ def main():
             continue
 
         max_output_bytes = req.get("maxOutputBytes", 8192)
-        if not isinstance(max_output_bytes, int) or max_output_bytes < 0:
+        if isinstance(max_output_bytes, bool) or not isinstance(max_output_bytes, int) or max_output_bytes < 0:
             max_output_bytes = 8192
         captured_stdout = BoundedTextCapture(max_output_bytes, "stdout")
         captured_stderr = BoundedTextCapture(max_output_bytes, "stderr")
@@ -238,7 +271,7 @@ def main():
                 result_val = "Kernel namespace reset successfully."
             else:
                 raw_result = execute_code(code, GLOBAL_SCOPE)
-                result_val, result_repr = serialize_result(raw_result)
+                result_val, result_repr = serialize_result(raw_result, max_output_bytes)
         except Exception as ex:
             success = False
             error_msg = str(ex)

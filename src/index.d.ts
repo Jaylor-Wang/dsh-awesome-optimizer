@@ -5,11 +5,11 @@ import type { FileMutationPolicyOptions } from './file-mutation-policy.d.ts';
 import type { EditRecoveryOptions } from './edit-recovery.d.ts';
 import type { ReadGuardOptions } from './read-guard.d.ts';
 import type { CompositeToolsOptions } from './composite-tools.d.ts';
-import type { PersistentEvalOptions, PersistentEvalService } from './persistent-eval/index.d.ts';
+import type { PersistentEvalOptions } from './persistent-eval/index.d.ts';
 import type { ConvergenceOptions, ConvergenceSignal } from './convergence.d.ts';
 import type { CustomPromptOptions } from './custom-prompt.d.ts';
 import type { TelemetryOptions } from './telemetry.d.ts';
-import type { ContextCompactionOptions, ContextCompactionService } from './context-compaction.d.ts';
+import type { ContextCompactionOptions } from './context-compaction.d.ts';
 
 export interface AgentOptimizerConfig {
   enabled?: boolean;
@@ -145,6 +145,7 @@ export {
   applyContextCompaction,
   ContextCompactionConfig,
   type ContextCompactionOptions,
+  type ContextCompactionStats,
   type ContextCompactionService
 } from './context-compaction.d.ts';
 export {

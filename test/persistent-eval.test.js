@@ -724,4 +724,48 @@ fetched + globalThis.offset;
     assert.equal(crashRes.success, false);
     assert.ok(crashRes.executionTimeMs < 2000, `Expected real elapsed time < 2000ms, got ${crashRes.executionTimeMs}ms`);
   });
+
+  test('DaemonPool uses process.execPath, StdioWorkerRunner bounds raw results & handles stdin EPIPE, and applyPersistentEval tolerates throwing workingDirectory', async t => {
+    const pool = new DaemonPool();
+    t.after(() => pool.destroyAll());
+    const nodeRunner = pool.getNodeRunner({ id: 'exec-path-session' });
+    assert.equal(nodeRunner.command, process.execPath);
+
+    // Defense-in-depth: StdioWorkerRunner truncates oversized result/resultRepr even from custom workers
+    const hugeResultScript = [
+      "const readline = require('node:readline');",
+      "process.stdout.write(JSON.stringify({status:'ready',pid:process.pid}) + '\\n');",
+      "readline.createInterface({input:process.stdin}).on('line', line => {",
+      "const req = JSON.parse(line);",
+      "process.stdout.write(JSON.stringify({id:req.id,success:true,stdout:'',stderr:'',result:{blob:'中'.repeat(500)},resultRepr:'中'.repeat(500)}) + '\\n'); });"
+    ].join('');
+    const hugeRunner = new StdioWorkerRunner({ command: process.execPath, args: ['-e', hugeResultScript], maxOutputBytes: 64 });
+    t.after(() => hugeRunner.destroy());
+    const bounded = await hugeRunner.execute('ignored');
+    assert.equal(bounded.success, true);
+    assert.ok(Buffer.byteLength(bounded.resultRepr, 'utf8') <= 64);
+    assert.ok(Buffer.byteLength(String(bounded.result), 'utf8') <= 64);
+    assert.doesNotMatch(bounded.resultRepr, /\uFFFD/);
+
+    // Worker closing stdin immediately must not crash host with unhandled EPIPE
+    const epipeScript = "process.stdout.write(JSON.stringify({status:'ready',pid:process.pid}) + '\\n'); process.stdin.destroy(); setTimeout(() => process.exit(0), 200);";
+    const epipeRunner = new StdioWorkerRunner({ command: process.execPath, args: ['-e', epipeScript], timeoutMs: 1000 });
+    t.after(() => epipeRunner.destroy());
+    await epipeRunner.ensureStarted();
+    const epipeRes = await epipeRunner.execute('x'.repeat(65536));
+    assert.equal(epipeRes.success, false);
+    assert.match(epipeRes.error, /exited unexpectedly|timed out/i);
+
+    // applyPersistentEval must not fail when ctx.get('workingDirectory') throws
+    const { ctx, registeredTools } = createMockContext();
+    ctx.get = key => {
+      if (key === 'workingDirectory') throw new Error('workingDirectory unavailable');
+      return undefined;
+    };
+    const svc = applyPersistentEval(ctx, { enabled: true, python: false, node: true });
+    t.after(() => svc?.destroy());
+    const nodeTool = registeredTools.get(EVAL_NODE_TOOL);
+    const out = await nodeTool.execute({ code: '19 + 23' }, { session: { id: 'throwing-cwd-session' } });
+    assert.equal(out, '=> 42');
+  });
 });

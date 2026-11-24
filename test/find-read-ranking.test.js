@@ -177,3 +177,17 @@ test('declaration ranking supports TS classes/arrows and Python, Go, and Rust de
     assert.equal(chosen[0].file, a, `False declaration "${falseDecl}" must not outrank a.ts`);
   }
 });
+
+test('multiline unclosed arrow declaration headers never cause catastrophic regex backtracking', () => {
+  const unclosed = 'export const handleUserAuthenticationRequest = (requestContext, sessionOptions, retryPolicy, auditSink, extraArgName,';
+  const a = file('a.ts', [[1, ['handleUserAuthenticationRequest'], 'handleUserAuthenticationRequest();']]);
+  const b = file('b.ts', [[1, ['handleUserAuthenticationRequest'], unclosed]]);
+  const started = performance.now();
+  const chosen = selectReadWindows(
+    [task(b, 1, 1, [1]), task(a, 1, 1, [1])],
+    { maxFiles: 1, maxWindows: 1, maxReadLines: 1 }
+  );
+  const elapsedMs = performance.now() - started;
+  assert.ok(elapsedMs < 250, `Expected linear-time matching (<250ms), took ${elapsedMs.toFixed(1)}ms`);
+  assert.equal(chosen[0].file, a);
+});

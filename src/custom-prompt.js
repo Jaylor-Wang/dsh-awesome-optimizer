@@ -156,6 +156,11 @@ export function resolveWorkspaceRoot(ctx, context) {
   return process.cwd();
 }
 
+function normalizeWatchKey(filePath) {
+  const resolved = path.resolve(filePath);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
 /**
  * Reactive file-driven manager for custom SYSTEM.md prompts.
  */
@@ -165,7 +170,11 @@ export class CustomPromptManager {
     this.globalFilePath = resolveGlobalPath(this.config.globalFile);
     this.cachedGlobal = null;
     this.cachedWorkspace = new Map();
+    this.workspaceRoots = new Map();
     this.watchers = new Map();
+    this.watchOwners = new Map();
+    this.watchCallbacks = new Map();
+    this.parentChildren = new Map();
     this.workspaceWatchKeys = new Map();
     this.debounceTimers = new Map();
     this.disposed = false;
@@ -176,14 +185,47 @@ export class CustomPromptManager {
     }
   }
 
-  _trackWatchKey(ownerWorkspace, key) {
-    if (!ownerWorkspace) return;
-    let set = this.workspaceWatchKeys.get(ownerWorkspace);
-    if (!set) {
-      set = new Set();
-      this.workspaceWatchKeys.set(ownerWorkspace, set);
+  _trackWatchOwner(key, ownerId) {
+    let owners = this.watchOwners.get(key);
+    if (!owners) {
+      owners = new Set();
+      this.watchOwners.set(key, owners);
     }
-    set.add(key);
+    owners.add(ownerId);
+    if (ownerId !== '__global__') {
+      let set = this.workspaceWatchKeys.get(ownerId);
+      if (!set) {
+        set = new Set();
+        this.workspaceWatchKeys.set(ownerId, set);
+      }
+      set.add(key);
+    }
+  }
+
+  _registerCallback(key, ownerId, onChange) {
+    let byOwner = this.watchCallbacks.get(key);
+    if (!byOwner) {
+      byOwner = new Map();
+      this.watchCallbacks.set(key, byOwner);
+    }
+    byOwner.set(ownerId, onChange);
+  }
+
+  _invokeCallbacks(key) {
+    const byOwner = this.watchCallbacks.get(key);
+    if (!byOwner) return;
+    for (const cb of [...byOwner.values()]) {
+      if (this.disposed) return;
+      try { cb(); } catch (_err) {}
+    }
+  }
+
+  _closeWatchHandleOnly(key) {
+    const watcher = this.watchers.get(key);
+    if (watcher) {
+      try { watcher.close(); } catch (_err) {}
+      this.watchers.delete(key);
+    }
   }
 
   _closeWatchKey(key) {
@@ -192,23 +234,39 @@ export class CustomPromptManager {
       clearTimeout(timer);
       this.debounceTimers.delete(key);
     }
-    const watcher = this.watchers.get(key);
-    if (watcher) {
-      try { watcher.close(); } catch (_err) {}
-      this.watchers.delete(key);
+    this._closeWatchHandleOnly(key);
+    this.watchOwners.delete(key);
+    this.watchCallbacks.delete(key);
+    this.parentChildren.delete(key);
+  }
+
+  _releaseWatchKey(key, ownerId) {
+    const byOwner = this.watchCallbacks.get(key);
+    if (byOwner) {
+      byOwner.delete(ownerId);
+      if (byOwner.size === 0) this.watchCallbacks.delete(key);
+    }
+    const owners = this.watchOwners.get(key);
+    if (owners) {
+      owners.delete(ownerId);
+      if (owners.size === 0) {
+        this._closeWatchKey(key);
+      }
     }
   }
 
-  _setWorkspaceCache(workspaceRoot, content) {
-    this.cachedWorkspace.delete(workspaceRoot);
-    this.cachedWorkspace.set(workspaceRoot, content);
+  _setWorkspaceCache(workspaceKey, workspaceRoot, content) {
+    this.cachedWorkspace.delete(workspaceKey);
+    this.cachedWorkspace.set(workspaceKey, content);
+    this.workspaceRoots.set(workspaceKey, workspaceRoot);
     const limit = this.config.maxWatchedWorkspaces ?? 32;
     while (this.cachedWorkspace.size > limit) {
       const oldest = this.cachedWorkspace.keys().next().value;
       this.cachedWorkspace.delete(oldest);
+      this.workspaceRoots.delete(oldest);
       const keys = this.workspaceWatchKeys.get(oldest);
       if (keys) {
-        for (const key of keys) this._closeWatchKey(key);
+        for (const key of keys) this._releaseWatchKey(key, oldest);
         this.workspaceWatchKeys.delete(oldest);
       }
     }
@@ -228,89 +286,116 @@ export class CustomPromptManager {
 
   loadWorkspace(workspaceRoot) {
     if (!workspaceRoot) return null;
+    const resolvedRoot = path.resolve(workspaceRoot);
+    const workspaceKey = normalizeWatchKey(resolvedRoot);
     try {
-      const wsPath = resolveWorkspacePath(workspaceRoot, this.config.workspaceFile);
+      const wsPath = resolveWorkspacePath(resolvedRoot, this.config.workspaceFile);
       const content = wsPath && fs.existsSync(wsPath)
         ? fs.readFileSync(wsPath, 'utf8').trim()
         : null;
-      this._setWorkspaceCache(workspaceRoot, content);
+      this._setWorkspaceCache(workspaceKey, resolvedRoot, content);
       if (this.config.hotReload) {
-        for (const candidate of resolveWorkspaceCandidates(workspaceRoot, this.config.workspaceFile)) {
-          this.watchPath(candidate, () => this.loadWorkspace(workspaceRoot), workspaceRoot);
+        for (const candidate of resolveWorkspaceCandidates(resolvedRoot, this.config.workspaceFile)) {
+          this.watchPath(candidate, () => this.loadWorkspace(resolvedRoot), workspaceKey);
         }
       }
       return content;
     } catch (_err) {
-      this._setWorkspaceCache(workspaceRoot, null);
+      this._setWorkspaceCache(workspaceKey, resolvedRoot, null);
       return null;
     }
   }
 
-  _scheduleChange(debounceKey, onChange) {
+  _scheduleChange(debounceKey) {
     clearTimeout(this.debounceTimers.get(debounceKey));
     const timer = setTimeout(() => {
       this.debounceTimers.delete(debounceKey);
       if (this.disposed) return;
-      onChange();
+      this._invokeCallbacks(debounceKey);
     }, 50);
     timer.unref?.();
     this.debounceTimers.set(debounceKey, timer);
   }
 
+  _attachFileWatcher(dir, filename, fileKey) {
+    if (this.disposed || !fs.existsSync(dir) || this.watchers.has(fileKey)) return;
+    const isWin = process.platform === 'win32';
+    const matchesName = (a, b) => (isWin ? a.toLowerCase() === b.toLowerCase() : a === b);
+    const watcher = fs.watch(dir, { persistent: false }, (_eventType, triggerName) => {
+      if (this.disposed) return;
+      if (!fs.existsSync(dir)) {
+        this._closeWatchHandleOnly(fileKey);
+        this._scheduleChange(fileKey);
+        return;
+      }
+      if (!triggerName || matchesName(triggerName, filename)) {
+        this._scheduleChange(fileKey);
+      }
+    });
+    watcher.on('error', () => {
+      if (!fs.existsSync(dir)) this._closeWatchHandleOnly(fileKey);
+    });
+    this.watchers.set(fileKey, watcher);
+  }
+
   watchPath(targetPath, onChange, ownerWorkspace = null) {
     if (!targetPath || this.disposed) return;
     try {
-      const dir = path.dirname(targetPath);
-      const filename = path.basename(targetPath);
+      const resolvedTarget = path.resolve(targetPath);
+      const dir = path.dirname(resolvedTarget);
+      const filename = path.basename(resolvedTarget);
       const isWin = process.platform === 'win32';
       const matchesName = (a, b) => (isWin ? a.toLowerCase() === b.toLowerCase() : a === b);
-      const fileKey = `file:${targetPath}`;
-      const parentKey = `dir:${dir}`;
+      const ownerId = ownerWorkspace ? normalizeWatchKey(ownerWorkspace) : '__global__';
+      const fileKey = `file:${normalizeWatchKey(resolvedTarget)}`;
+      const parentKey = `dir:${normalizeWatchKey(dir)}`;
+
+      this._registerCallback(fileKey, ownerId, onChange);
+      this._trackWatchOwner(fileKey, ownerId);
 
       // Keep a parent watcher for nested subdirectories (e.g. .dsh/) so deletion + recreation re-attaches cleanly.
       const parentDir = path.dirname(dir);
       const subDirName = path.basename(dir);
-      if (parentDir !== dir && fs.existsSync(parentDir) && !this.watchers.has(parentKey)) {
-        const shouldWatchParent = !fs.existsSync(dir) || (ownerWorkspace && path.resolve(dir) !== path.resolve(ownerWorkspace));
+      if (parentDir !== dir && fs.existsSync(parentDir)) {
+        const shouldWatchParent = !fs.existsSync(dir)
+          || (ownerWorkspace && normalizeWatchKey(dir) !== ownerId);
         if (shouldWatchParent) {
-          const parentWatcher = fs.watch(parentDir, { persistent: false }, (_eventType, triggerName) => {
-            if (this.disposed) return;
-            if (!triggerName || matchesName(triggerName, subDirName)) {
-              if (fs.existsSync(dir)) {
-                if (!this.watchers.has(fileKey)) {
-                  this.watchPath(targetPath, onChange, ownerWorkspace);
+          let children = this.parentChildren.get(parentKey);
+          if (!children) {
+            children = new Map();
+            this.parentChildren.set(parentKey, children);
+          }
+          children.set(fileKey, { dir, filename });
+          this._trackWatchOwner(parentKey, ownerId);
+
+          if (!this.watchers.has(parentKey)) {
+            const parentWatcher = fs.watch(parentDir, { persistent: false }, (_eventType, triggerName) => {
+              if (this.disposed) return;
+              if (!triggerName || matchesName(triggerName, subDirName)) {
+                const tracked = this.parentChildren.get(parentKey);
+                if (!tracked) return;
+                const dirExists = fs.existsSync(dir);
+                for (const [childFileKey, meta] of tracked.entries()) {
+                  if (!this.watchOwners.has(childFileKey)) continue;
+                  if (dirExists) {
+                    if (!this.watchers.has(childFileKey)) {
+                      this._attachFileWatcher(meta.dir, meta.filename, childFileKey);
+                    }
+                    this._scheduleChange(childFileKey);
+                  } else if (this.watchers.has(childFileKey)) {
+                    this._closeWatchHandleOnly(childFileKey);
+                    this._scheduleChange(childFileKey);
+                  }
                 }
-                this._scheduleChange(fileKey, onChange);
-              } else if (this.watchers.has(fileKey)) {
-                this._closeWatchKey(fileKey);
-                this._scheduleChange(fileKey, onChange);
               }
-            }
-          });
-          parentWatcher.on('error', () => {});
-          this.watchers.set(parentKey, parentWatcher);
-          this._trackWatchKey(ownerWorkspace, parentKey);
+            });
+            parentWatcher.on('error', () => {});
+            this.watchers.set(parentKey, parentWatcher);
+          }
         }
       }
 
-      if (!fs.existsSync(dir) || this.watchers.has(fileKey)) return;
-
-      const watcher = fs.watch(dir, { persistent: false }, (_eventType, triggerName) => {
-        if (this.disposed) return;
-        if (!fs.existsSync(dir)) {
-          this._closeWatchKey(fileKey);
-          this._scheduleChange(fileKey, onChange);
-          return;
-        }
-        if (!triggerName || matchesName(triggerName, filename)) {
-          this._scheduleChange(fileKey, onChange);
-        }
-      });
-      watcher.on('error', () => {
-        if (!fs.existsSync(dir)) this._closeWatchKey(fileKey);
-      });
-      this.watchers.set(fileKey, watcher);
-      this._trackWatchKey(ownerWorkspace, fileKey);
+      this._attachFileWatcher(dir, filename, fileKey);
     } catch (_err) {
       // Non-fatal
     }
@@ -322,14 +407,15 @@ export class CustomPromptManager {
 
   getWorkspacePrompt(workspaceRoot) {
     if (!workspaceRoot) return '';
-    if (!this.cachedWorkspace.has(workspaceRoot)) {
+    const workspaceKey = normalizeWatchKey(workspaceRoot);
+    if (!this.cachedWorkspace.has(workspaceKey)) {
       this.loadWorkspace(workspaceRoot);
     } else {
-      const value = this.cachedWorkspace.get(workspaceRoot);
-      this.cachedWorkspace.delete(workspaceRoot);
-      this.cachedWorkspace.set(workspaceRoot, value);
+      const value = this.cachedWorkspace.get(workspaceKey);
+      this.cachedWorkspace.delete(workspaceKey);
+      this.cachedWorkspace.set(workspaceKey, value);
     }
-    return this.cachedWorkspace.get(workspaceRoot) || '';
+    return this.cachedWorkspace.get(workspaceKey) || '';
   }
 
   getEffectivePrompt(workspaceRoot) {
@@ -352,8 +438,8 @@ export class CustomPromptManager {
 
   reload() {
     this.loadGlobal();
-    for (const wsRoot of [...this.cachedWorkspace.keys()]) {
-      this.loadWorkspace(wsRoot);
+    for (const wsKey of [...this.cachedWorkspace.keys()]) {
+      this.loadWorkspace(this.workspaceRoots.get(wsKey) ?? wsKey);
     }
   }
 
@@ -369,7 +455,11 @@ export class CustomPromptManager {
       } catch (_err) {}
     }
     this.watchers.clear();
+    this.watchOwners.clear();
+    this.watchCallbacks.clear();
+    this.parentChildren.clear();
     this.workspaceWatchKeys.clear();
+    this.workspaceRoots.clear();
     this.cachedWorkspace.clear();
   }
 }

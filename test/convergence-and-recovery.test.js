@@ -601,3 +601,120 @@ test('failureRecovery preserves pending retry_failed_write across non-mutating e
   }
 });
 
+test('failureRecovery isolates in-flight candidates across concurrent sessions', async () => {
+  const { applyFailureRecovery, PAIRING_ERROR } = await import('../src/failure-recovery.js');
+  const listeners = new Map();
+  const writeDef = { name: 'write' };
+  const ctx = {
+    on(event, fn) {
+      if (!listeners.has(event)) listeners.set(event, []);
+      listeners.get(event).push(fn);
+    },
+    tools: {
+      register() {},
+      get: name => (name === 'write' ? writeDef : undefined),
+      executable: name => (name === 'write' ? writeDef : undefined)
+    }
+  };
+  const service = applyFailureRecovery(ctx, { enabled: true });
+  const sessionA = { id: 'sess-a' };
+  const sessionB = { id: 'sess-b' };
+  const agentB = { session: sessionB };
+  const emitSession = (session, event) => {
+    for (const fn of listeners.get('session/event') ?? []) fn(session, event);
+  };
+
+  emitSession(sessionA, { type: 'turn/start', data: { turn: 1 } });
+  emitSession(sessionB, { type: 'turn/start', data: { turn: 1 } });
+
+  const execB = {
+    token: Symbol('exec-b'),
+    callId: 'write-b',
+    rootCallId: 'write-b',
+    parent: undefined,
+    name: 'write',
+    agent: agentB,
+    signal: new AbortController().signal,
+    arguments: {
+      file_path: 'out.txt',
+      content: 'Z'.repeat(9000),
+      justification: 'Unpaired justification'
+    }
+  };
+  const errResult = { isError: true, error: { message: PAIRING_ERROR } };
+
+  for (const fn of listeners.get('tools/execute') ?? []) {
+    await fn(execB, async () => errResult);
+  }
+  // Session A finishes turn while Session B is between tools/execute and tools/result
+  emitSession(sessionA, { type: 'turn/end', data: { turn: 1 } });
+
+  for (const fn of listeners.get('tools/result') ?? []) {
+    fn(execB, errResult);
+  }
+
+  const recordB = service.getRecord(sessionB);
+  assert.ok(recordB, 'Session A turn/end must not clear Session B in-flight candidate');
+  assert.equal(recordB.callId, 'write-b');
+});
+
+test('fileMutationPolicy handles null stat, toolSet edit admission, and edit_batch/find_and_read without double-counting', async () => {
+  const { fileExists, FileMutationPolicyManager } = await import('../src/file-mutation-policy.js');
+  const nullStatFs = {
+    async resolve(filePath) { return { targetKey: filePath }; },
+    async stat() { return null; }
+  };
+  assert.equal(await fileExists('absent.ts', '', nullStatFs), false);
+
+  const manager = new FileMutationPolicyManager({ mode: 'enforce', minLargeWriteBytes: 32 });
+  const session = { id: 'mutation-toolset' };
+  manager.onTurnStart(session, 1);
+
+  // Direct edit_batch & find_and_read recording when leaf sub-calls were not emitted
+  manager.recordResult(session, {
+    token: Symbol('direct-batch'),
+    name: 'edit_batch',
+    arguments: { edits: [{ file_path: 'a.ts' }, { file_path: 'b.ts' }] }
+  }, { isError: false });
+  manager.recordResult(session, {
+    name: 'find_and_read',
+    arguments: { path: 'src' }
+  }, { isError: false });
+  let summary = manager.getSummary(session, 1);
+  assert.equal(summary.editsCount, 2);
+  assert.equal(summary.observedFiles, 3);
+
+  // Pipeline edit_batch where leaf 'edit' sub-calls already ran must NOT double-count
+  const batchToken = Symbol('pipeline-batch');
+  manager.recordResult(session, {
+    parent: batchToken,
+    name: 'edit',
+    arguments: { file_path: 'c.ts' }
+  }, { isError: false });
+  manager.recordResult(session, {
+    token: batchToken,
+    name: 'edit_batch',
+    arguments: { edits: [{ file_path: 'c.ts' }, { file_path: 'd.ts' }] }
+  }, { isError: false });
+  summary = manager.getSummary(session, 1);
+  assert.equal(summary.editsCount, 3);
+
+  // Respect exec.toolSet when checking whether 'edit' is admitted
+  const restrictedToolSet = new Set(['write']);
+  const toolsService = {
+    get(name, _agent, toolSet) {
+      if (toolSet) return toolSet.has(name) ? { name } : undefined;
+      return { name };
+    }
+  };
+  const decision = await manager.evaluateToolExecution(session, {
+    callId: 'w-large',
+    name: 'write',
+    agent: { session },
+    toolSet: restrictedToolSet,
+    arguments: { file_path: 'a.ts', content: 'X'.repeat(100) }
+  }, toolsService, nullStatFs);
+  assert.equal(decision.allowed, true);
+  assert.equal(decision.reason, 'no-edit-available');
+});
+

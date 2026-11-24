@@ -116,6 +116,14 @@ export class AgentTelemetryManager {
     return session;
   }
 
+  #getService(key) {
+    try {
+      return this.ctx?.get?.(key);
+    } catch {
+      return undefined;
+    }
+  }
+
   #digestMessage(message) {
     if (message && typeof message === 'object') {
       return createHash('sha256').update(JSON.stringify(message)).digest('hex');
@@ -370,14 +378,14 @@ export class AgentTelemetryManager {
       },
       cacheUsageCoverage,
       turnOutcome: state.turnOutcome,
-      runtimePolicy: this.ctx?.get?.('runtimePolicy')?.getSummary(targetSession, state.turn) ?? null,
-      fileMutationPolicy: this.ctx?.get?.('fileMutationPolicy')?.getSummary(targetSession, state.turn) ?? null,
-      failureRecovery: this.ctx?.get?.('failureRecovery')?.getStats(targetSession) ?? null,
-      editRecovery: this.ctx?.get?.('editRecovery')?.getStats(targetSession) ?? null,
-      compositeTools: this.ctx?.get?.('compositeTools')?.getStats(targetSession) ?? null,
-      readGuard: this.ctx?.get?.('readGuard')?.getStats(targetSession) ?? null,
-      contextCompaction: this.ctx?.get?.('contextCompaction')?.getStats() ?? null,
-      convergenceGuidance: this.ctx?.get?.('convergenceGuidance')?.getSummary(targetSession, state.turn) ?? null
+      runtimePolicy: this.#getService('runtimePolicy')?.getSummary(targetSession, state.turn) ?? null,
+      fileMutationPolicy: this.#getService('fileMutationPolicy')?.getSummary(targetSession, state.turn) ?? null,
+      failureRecovery: this.#getService('failureRecovery')?.getStats(targetSession) ?? null,
+      editRecovery: this.#getService('editRecovery')?.getStats(targetSession) ?? null,
+      compositeTools: this.#getService('compositeTools')?.getStats(targetSession) ?? null,
+      readGuard: this.#getService('readGuard')?.getStats(targetSession) ?? null,
+      contextCompaction: this.#getService('contextCompaction')?.getStats() ?? null,
+      convergenceGuidance: this.#getService('convergenceGuidance')?.getSummary(targetSession, state.turn) ?? null
     };
   }
 }

@@ -99,9 +99,13 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
   function getWorkingDirectory(session) {
     const key = sessionKey(session);
     if (!hasCachedCwd(key)) {
-      const service = typeof ctx.get === 'function' ? ctx.get('workingDirectory') : ctx.workingDirectory;
-      const cwd = service?.get?.(session);
-      if (cwd !== undefined) setCachedCwd(key, cwd);
+      try {
+        const service = typeof ctx.get === 'function' ? ctx.get('workingDirectory') : ctx.workingDirectory;
+        const cwd = service?.get?.(session);
+        if (cwd !== undefined) setCachedCwd(key, cwd);
+      } catch {
+        return undefined;
+      }
     }
     return getCachedCwd(key);
   }

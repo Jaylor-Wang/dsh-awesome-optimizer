@@ -274,6 +274,22 @@ f"【{title}】动画计算完成"
       assert.equal(followUp.success, true);
       assert.equal(followUp.result, 5);
     });
+
+    test('should bound oversized return values to maxOutputBytes without corrupting UTF-8', async () => {
+      for (const [id, code] of [
+        ['py-big-str', '"中😀" * 500'],
+        ['py-big-list', 'list(range(1000))']
+      ]) {
+        const res = await pyClient.send({ id, code, maxOutputBytes: 64 });
+        assert.equal(res.success, true);
+        assert.equal(typeof res.resultRepr, 'string');
+        assert.equal(typeof res.result, 'string');
+        assert.ok(Buffer.byteLength(res.resultRepr, 'utf8') <= 64);
+        assert.ok(Buffer.byteLength(res.result, 'utf8') <= 64);
+        assert.doesNotMatch(res.resultRepr, /\uFFFD/);
+        assert.match(res.resultRepr, /Output truncated/);
+      }
+    });
   });
 
   describe('Node.js Worker (node_worker.mjs)', () => {
@@ -465,6 +481,69 @@ let retained = 7;
       assert.equal(p2.id, 'pipe-2');
       assert.equal(p2.stdout, 'second\n');
       assert.equal(p2.result, 2);
+    });
+
+    test('should handle null-prototype throws, unprintable objects, and oversized results without hanging', async () => {
+      const nullProtoErr = await nodeClient.send({
+        id: 'node-null-proto-throw',
+        code: 'throw Object.create(null);'
+      });
+      assert.equal(nullProtoErr.id, 'node-null-proto-throw');
+      assert.equal(nullProtoErr.success, false);
+      assert.ok(typeof nullProtoErr.error === 'string' && nullProtoErr.error.length > 0);
+
+      const badToStringErr = await nodeClient.send({
+        id: 'node-bad-tostring-throw',
+        code: 'throw { toString() { throw new Error("bad toString"); } };'
+      });
+      assert.equal(badToStringErr.id, 'node-bad-tostring-throw');
+      assert.equal(badToStringErr.success, false);
+      assert.ok(typeof badToStringErr.error === 'string' && badToStringErr.error.length > 0);
+
+      const unprintableRes = await nodeClient.send({
+        id: 'node-unprintable-res',
+        code: 'Object.assign(Object.create(null), { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("inspect boom"); } })'
+      });
+      assert.equal(unprintableRes.id, 'node-unprintable-res');
+      assert.equal(unprintableRes.success, true);
+      assert.equal(typeof unprintableRes.resultRepr, 'string');
+
+      const revokedRes = await nodeClient.send({
+        id: 'node-revoked-proxy-res',
+        code: '(() => { const p = Proxy.revocable({}, {}); p.revoke(); return p.proxy; })()'
+      });
+      assert.equal(revokedRes.id, 'node-revoked-proxy-res');
+      assert.equal(revokedRes.success, false);
+      assert.match(revokedRes.error, /revoked/i);
+
+      for (const [id, code] of [
+        ['node-big-str', '"中😀".repeat(500)'],
+        ['node-big-arr', 'Array.from({ length: 1000 }, (_, i) => i)']
+      ]) {
+        const res = await nodeClient.send({ id, code, maxOutputBytes: 64 });
+        assert.equal(res.success, true);
+        assert.equal(typeof res.resultRepr, 'string');
+        assert.equal(typeof res.result, 'string');
+        assert.ok(Buffer.byteLength(res.resultRepr, 'utf8') <= 64);
+        assert.ok(Buffer.byteLength(res.result, 'utf8') <= 64);
+        assert.doesNotMatch(res.resultRepr, /\uFFFD/);
+        assert.match(res.resultRepr, /Output truncated/);
+      }
+
+      // Tiny maxOutputBytes (< suffix length) must still preserve valid UTF-8 boundaries
+      const tinyStdout = await nodeClient.send({
+        id: 'node-tiny-utf8-stdout',
+        code: 'console.log("中😀".repeat(20))',
+        maxOutputBytes: 10
+      });
+      assert.equal(tinyStdout.success, true);
+      assert.ok(Buffer.byteLength(tinyStdout.stdout, 'utf8') <= 10);
+      assert.doesNotMatch(tinyStdout.stdout, /\uFFFD/);
+
+      // Worker stays responsive after all edge cases
+      const alive = await nodeClient.send({ id: 'node-edge-alive', code: '6 * 7' });
+      assert.equal(alive.success, true);
+      assert.equal(alive.result, 42);
     });
   });
 });

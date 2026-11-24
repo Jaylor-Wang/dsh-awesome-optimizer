@@ -6,6 +6,7 @@ export type FileMutationPolicyMode = 'off' | 'observe' | 'enforce';
 export interface FileMutationPolicyOptions {
   mode?: FileMutationPolicyMode;
   minLargeWriteBytes?: number;
+  /** @deprecated Unused legacy option retained for backward compatibility. */
   reminderLimit?: number;
   allowFullReplacement?: (exec: any, normalizedPath: string) => boolean;
 }

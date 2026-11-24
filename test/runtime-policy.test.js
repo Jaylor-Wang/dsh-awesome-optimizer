@@ -5,6 +5,8 @@ import { normalizePath, sizeBucket, computeFingerprint, classifyToolCall } from 
 test('normalizePath and computeFingerprint produce deterministic values across platforms', () => {
   assert.equal(normalizePath('E:\\Github\\Foo\\bar.js'), 'e:/github/foo/bar.js');
   assert.equal(normalizePath('src\\Foo\\index.js', 'E:\\Github\\Repo'), 'e:/github/repo/src/foo/index.js');
+  assert.equal(normalizePath('\\\\Server\\Share\\Dir\\File.js'), '//server/share/dir/file.js');
+  assert.equal(normalizePath('sub\\File.js', '\\\\Server\\Share\\Dir'), '//server/share/dir/sub/file.js');
   assert.equal(sizeBucket(0), '0');
   assert.equal(sizeBucket(512), '<1K');
   assert.equal(sizeBucket(4096), '1K-8K');
@@ -228,6 +230,15 @@ test('classifyToolCall classifies edit_batch, eval_python, and eval_node accurat
   assert.equal(eb.opClass, 'edit');
   assert.equal(eb.targetPath, 'a.js,b.js');
   assert.equal(eb.byteLength, 17);
+
+  const ebWin = classifyToolCall('edit_batch', {
+    edits: [
+      { file_path: '.\\A.js', old_string: 'old1', new_string: 'new1' },
+      { file_path: 'E:\\Workspace\\Repo\\a.js', old_string: 'old1', new_string: 'new1' },
+      { file_path: 'sub\\..\\B.js', old_string: 'old2', new_string: 'new2' }
+    ]
+  }, 'E:\\Workspace\\Repo');
+  assert.equal(ebWin.targetPath, 'e:/workspace/repo/a.js,e:/workspace/repo/b.js');
 
   const ep = classifyToolCall('eval_python', { code: 'print(123)' });
   assert.equal(ep.opClass, 'eval');

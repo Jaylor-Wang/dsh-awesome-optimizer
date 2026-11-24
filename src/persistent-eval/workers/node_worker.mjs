@@ -41,7 +41,43 @@ function createFreshContext() {
 
 let CURRENT_CONTEXT = createFreshContext();
 
-function serializeResult(val) {
+function safeString(val) {
+  try {
+    return String(val);
+  } catch {
+    try {
+      return Object.prototype.toString.call(val);
+    } catch {
+      return '[Unprintable value]';
+    }
+  }
+}
+
+function byteLength(value) {
+  return Buffer.byteLength(value, 'utf8');
+}
+
+function sliceUtf8(text, maxBytes) {
+  if (maxBytes <= 0) return '';
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= maxBytes) return text;
+  let end = maxBytes;
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+  return bytes.subarray(0, end).toString('utf8');
+}
+
+function truncateUtf8(value, maxBytes, label) {
+  const text = safeString(value ?? '');
+  if (byteLength(text) <= maxBytes) return text;
+  if (maxBytes <= 0) return '';
+  let suffix = `\n\n[Output truncated: ${label} exceeded ${maxBytes} bytes.]`;
+  if (byteLength(suffix) >= maxBytes) suffix = '\n[Output truncated]';
+  const suffixBytes = byteLength(suffix);
+  if (suffixBytes >= maxBytes) return sliceUtf8(text, maxBytes);
+  return sliceUtf8(text, maxBytes - suffixBytes) + suffix;
+}
+
+function serializeResult(val, maxOutputBytes = 8192) {
   if (val === undefined) return { result: null, resultRepr: 'undefined' };
   if (val === null) return { result: null, resultRepr: 'null' };
 
@@ -61,33 +97,71 @@ function serializeResult(val) {
     } else {
       repr = String(val);
     }
+  } else if (typeof val === 'string' && byteLength(val) > maxOutputBytes) {
+    const truncated = truncateUtf8(val, maxOutputBytes, 'result');
+    return { result: truncated, resultRepr: truncated };
   } else {
     try {
-      repr = util.inspect(val, { depth: 4, maxArrayLength: 100, breakLength: 80 });
+      repr = util.inspect(val, {
+        depth: 4,
+        maxArrayLength: 100,
+        maxStringLength: Math.max(256, maxOutputBytes),
+        breakLength: 80
+      });
     } catch {
-      repr = String(val);
+      repr = safeString(val);
     }
+  }
+
+  const reprExceeded = byteLength(repr) > maxOutputBytes;
+  const boundedRepr = reprExceeded ? truncateUtf8(repr, maxOutputBytes, 'result') : repr;
+
+  if (reprExceeded) {
+    return { result: boundedRepr, resultRepr: boundedRepr };
   }
 
   let serializable;
   try {
-    serializable = JSON.parse(JSON.stringify(val));
+    const encoded = JSON.stringify(val);
+    if (encoded === undefined) {
+      serializable = boundedRepr;
+    } else if (byteLength(encoded) > maxOutputBytes) {
+      const truncated = truncateUtf8(encoded, maxOutputBytes, 'result');
+      return { result: truncated, resultRepr: truncated };
+    } else {
+      serializable = JSON.parse(encoded);
+    }
   } catch {
-    serializable = repr;
+    serializable = boundedRepr;
   }
 
-  return { result: serializable, resultRepr: repr };
+  return { result: serializable, resultRepr: boundedRepr };
 }
 
 function formatCaughtError(err) {
   // Errors thrown inside vm.createContext() belong to a different realm, so `err instanceof Error` is false.
-  if (util.types.isNativeError(err) || err instanceof Error) {
-    return err.stack || err.message || String(err);
+  try {
+    if (util.types.isNativeError(err) || err instanceof Error) {
+      return err.stack || err.message || safeString(err);
+    }
+    if (err && typeof err === 'object' && typeof err.stack === 'string' && err.stack) {
+      return err.stack;
+    }
+  } catch {
+    // Fall through to safe conversion below.
   }
-  if (err && typeof err === 'object' && typeof err.stack === 'string' && err.stack) {
-    return err.stack;
+  if (err === null || (typeof err !== 'object' && typeof err !== 'function')) {
+    return safeString(err);
   }
-  return String(err);
+  try {
+    return String(err);
+  } catch {
+    try {
+      return util.inspect(err, { depth: 4, maxArrayLength: 100, breakLength: 80 });
+    } catch {
+      return safeString(err);
+    }
+  }
 }
 
 function wrapAsyncCode(code) {
@@ -147,10 +221,6 @@ async function executeInContext(code, context) {
   return syncScript.runInContext(context, { breakOnSigint: true });
 }
 
-function byteLength(value) {
-  return Buffer.byteLength(value, 'utf8');
-}
-
 function createBoundedCapture(maxBytes, label) {
   const suffix = `\n\n[Output truncated: ${label} exceeded ${maxBytes} bytes.]`;
   let value = '';
@@ -158,7 +228,7 @@ function createBoundedCapture(maxBytes, label) {
   return {
     write(chunk) {
       if (truncated) return;
-      const text = typeof chunk === 'string' ? chunk : String(chunk ?? '');
+      const text = safeString(chunk ?? '');
       if (byteLength(value) + byteLength(text) <= maxBytes) {
         value += text;
         return;
@@ -166,12 +236,9 @@ function createBoundedCapture(maxBytes, label) {
       const effectiveSuffix = byteLength(suffix) >= maxBytes ? '\n[Output truncated]' : suffix;
       const suffixBytes = byteLength(effectiveSuffix);
       const available = Math.max(0, maxBytes - byteLength(value) - suffixBytes);
-      const bytes = Buffer.from(text, 'utf8');
-      let end = Math.min(available, bytes.length);
-      while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
-      value += bytes.subarray(0, end).toString('utf8');
+      value += sliceUtf8(text, available);
       if (byteLength(value) + suffixBytes <= maxBytes) value += effectiveSuffix;
-      else value = Buffer.from(value, 'utf8').subarray(0, maxBytes).toString('utf8');
+      else value = sliceUtf8(value, maxBytes);
       truncated = true;
     },
     get value() { return value; }
@@ -256,7 +323,8 @@ function main() {
     const startTime = performance.now();
     let success = true;
     let errorMsg = null;
-    let rawResult;
+    let result = null;
+    let resultRepr = null;
 
     try {
       if (Object.hasOwn(req, 'cwd')) {
@@ -270,9 +338,10 @@ function main() {
         CURRENT_CONTEXT.console = customConsole;
       }
       CURRENT_CONTEXT.CWD = process.cwd();
-      rawResult = action === 'reset'
+      const rawResult = action === 'reset'
         ? 'Node VM context reset successfully.'
         : await executeInContext(code, CURRENT_CONTEXT);
+      ({ result, resultRepr } = serializeResult(rawResult, maxOutputBytes));
     } catch (err) {
       success = false;
       errorMsg = formatCaughtError(err);
@@ -280,7 +349,6 @@ function main() {
     }
 
     const elapsedMs = Number((performance.now() - startTime).toFixed(3));
-    const { result, resultRepr } = serializeResult(rawResult);
 
     sendFrame({
       id: reqId,
@@ -297,7 +365,20 @@ function main() {
   // Serialize incoming requests strictly in arrival order even if multiple frames are pipelined.
   let lineChain = Promise.resolve();
   rl.on('line', rawLine => {
-    lineChain = lineChain.then(() => handleLine(rawLine)).catch(() => {});
+    lineChain = lineChain.then(() => handleLine(rawLine)).catch(err => {
+      let reqId = null;
+      try { reqId = JSON.parse(rawLine.trim())?.id ?? null; } catch {}
+      sendFrame({
+        id: reqId,
+        success: false,
+        stdout: '',
+        stderr: '',
+        result: null,
+        resultRepr: null,
+        error: formatCaughtError(err),
+        executionTimeMs: 0
+      });
+    });
   });
 }
 

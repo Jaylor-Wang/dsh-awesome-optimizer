@@ -20,17 +20,20 @@ export const RuntimePolicyConfig = z.object({
  */
 export function normalizePath(filePath, cwd = '') {
   if (typeof filePath !== 'string' || !filePath.trim()) return '';
-  let normalized = filePath.trim().replace(/\\/g, '/');
+  const rawTrimmed = filePath.trim().replace(/\\/g, '/');
+  let normalized = rawTrimmed;
   const normalizedCwd = typeof cwd === 'string' ? cwd.trim().replace(/\\/g, '/') : '';
-  if (normalizedCwd && !path.posix.isAbsolute(normalized) && !/^[a-zA-Z]:\//.test(normalized)) {
+  const isRelative = !path.posix.isAbsolute(normalized) && !/^[a-zA-Z]:\//.test(normalized);
+  const isUnc = /^\/\/[^/]+\//.test(rawTrimmed) || (isRelative && /^\/\/[^/]+\//.test(normalizedCwd));
+  if (normalizedCwd && isRelative) {
     normalized = path.posix.join(normalizedCwd, normalized);
   }
-  const isWindowsPath = /^[a-zA-Z]:\//.test(normalized) || /^\/\/[^/]+\//.test(normalized);
+  const isWindowsPath = /^[a-zA-Z]:\//.test(normalized) || isUnc;
   if (/^[a-zA-Z]:\//.test(normalized)) {
     normalized = normalized[0].toLowerCase() + normalized.slice(1);
   }
   normalized = path.posix.normalize(normalized);
-  if (isWindowsPath && filePath.trim().replace(/\\/g, '/').startsWith('//') && !normalized.startsWith('//')) {
+  if (isUnc && !normalized.startsWith('//')) {
     normalized = `/${normalized}`;
   }
   if (normalized.length > 1 && normalized.endsWith('/') && !/^[a-z]:\/$/.test(normalized)) {
@@ -38,6 +41,15 @@ export function normalizePath(filePath, cwd = '') {
   }
   if (normalized === '.') return '';
   return isWindowsPath ? normalized.toLowerCase() : normalized;
+}
+
+function normalizeTargetPath(name, targetPath, cwd = '') {
+  if (name === 'edit_batch' && typeof targetPath === 'string' && targetPath) {
+    return Array.from(new Set(
+      targetPath.split(',').map(part => normalizePath(part, cwd)).filter(Boolean)
+    )).join(',');
+  }
+  return normalizePath(targetPath, cwd);
 }
 
 /**
@@ -59,7 +71,7 @@ export function computeFingerprint({ name, targetPath, opClass, errorCode, isErr
   const parts = [
     name ?? '',
     opClass ?? 'generic',
-    normalizePath(targetPath),
+    normalizeTargetPath(name, targetPath),
     isError ? (errorCode ?? 'ERROR') : 'OK',
     sizeBucket(byteLength)
   ];
@@ -85,7 +97,7 @@ function invocationKey(name, args, classified, cwd) {
   const identity = {
     name,
     opClass: classified.opClass,
-    targetPath: normalizePath(classified.targetPath, cwd),
+    targetPath: normalizeTargetPath(name, classified.targetPath, cwd),
     byteLength: classified.byteLength,
     args: stableValue(args, cwd)
   };
@@ -113,7 +125,9 @@ export function classifyToolCall(name, args = {}, cwd = '') {
     opClass = 'edit';
     const items = Array.isArray(args.edits) ? args.edits : [];
     targetPath = Array.from(new Set(
-      items.map(item => (typeof item?.file_path === 'string' ? item.file_path : '')).filter(Boolean)
+      items
+        .map(item => (typeof item?.file_path === 'string' ? normalizePath(item.file_path, cwd) : ''))
+        .filter(Boolean)
     )).join(',');
     byteLength = items.reduce((sum, item) => {
       const newLen = typeof item?.new_string === 'string' ? Buffer.byteLength(item.new_string, 'utf8') : 0;
@@ -365,9 +379,10 @@ export class RuntimePolicyManager {
       ? `ERROR:${createHash('sha256').update(typeof errorMessage === 'string' ? errorMessage : '').digest('hex').slice(0, 16)}`
       : 'OK');
 
+    const normTarget = normalizeTargetPath(name, targetPath, state.cwd);
     const fp = computeFingerprint({
       name,
-      targetPath: normalizePath(targetPath, state.cwd),
+      targetPath: normTarget,
       opClass,
       errorCode,
       isError,
@@ -408,7 +423,7 @@ export class RuntimePolicyManager {
       callId: exec.callId,
       name,
       opClass,
-      targetPath: normalizePath(targetPath, state.cwd),
+      targetPath: normTarget,
       byteLength,
       isError,
       errorCode,
@@ -558,7 +573,7 @@ export class RuntimePolicyManager {
     const trackedFailure = state.invocationFailures.get(key);
     const priorRecord = trackedFailure?.record;
     if (priorRecord?.isError && trackedFailure.count >= this.config.noProgressLimit) {
-      const normTarget = normalizePath(targetPath, state.cwd);
+      const normTarget = normalizeTargetPath(name, targetPath, state.cwd);
       const candidateFingerprint = computeFingerprint({
         name,
         targetPath: normTarget,

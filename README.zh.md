@@ -5,18 +5,18 @@
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-207%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-216%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 围绕官方 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`) 打造的高性能运行时策略防护、持久化 Python/Node 执行内核、PTC 复合批处理工具、全新独立系统提示词接管与客观 A/B 轮次度量插件。
 
 ---
 
-## v4.3.0 更新亮点
+## v4.4.0 更新亮点
 
-- **效率信号驱动软收敛 (`convergence`)**：默认升级为 `mode: "adaptive"`（保留 `periodic` 兼容），仅在出现效率退化信号时追加极简 `notice`——连续单工具只读达到 `serialReadThreshold`（默认 `4`）时引导并行批读或使用 `find_and_read`，长尾探索达到 `longTailStepThreshold`（默认 `12`）且连续 `stallStepsThreshold`（默认 `6`）步无编辑/验证时给出带客观步数锚点的收敛提示；活跃编辑/验证全程静默，健康高并行批读自动 2× 拉长阈值与冷却；引入 `cooldownSteps: 6` 杜绝报错恢复后连发、过滤复合工具子调用（`exec.parent`）、补齐跨轮 `snapshotEvents()` 回放，并按实际准入工具动态裁剪 `buildGuidance`。
-- **复合工具加固与模块化 (`find_and_read` / `edit_batch`)**：修复 `find_and_read` 的 `read` 准入校验漏传 `exec.toolSet`、`parseGrepOutput` 合并去重统一规范化 Windows/POSIX 路径、`find-read-ranking.js` 声明优先扩展至 TS 类/箭头函数与 Python/Go/Rust；将 `edit_batch` 拆分为独立模块 `src/edit-batch.js`，修复 `resolve` 失败重复调用与权限拒绝原因透传，并在非 `atomic` 模式下按解析后的物理身份合并别名路径预检与熔断。
-- **共享有界预检与 `readGuard` 性能优化**：抽取共享 `src/fs-preflight.js` 统一 `readGuard`、`editRecovery` 与 `edit_batch` 的有界读取与 `workingDirectory`/`fs` 安全获取（同步加固 `runtimePolicy` 与 `fileMutationPolicy`）；将 `readGuard` 本地回退改为按需分块读取、把 `code-outline.js` 热循环内 3 处正则提取为顶层预编译常量、跳过无扩展名非代码文件盲读 I/O、补齐 `retry_failed_write` 缓存失效，并为 `ast-outline.js` 计时器添加 `.unref?.()`。
+- **线性时间声明排序 (`find_and_read`)**：消除 `src/find-read-ranking.js` 在多行未闭合 JS/TS 箭头函数首行上的正则灾难性回溯（ReDoS），将参数组改写为严格线性时间匹配。
+- **持久化求值内核与 IPC 全面加固 (`persistentEval`)**：修复 `node_worker.mjs` 在抛出无原型对象（`throw Object.create(null)`）或不可序列化返回值时静默死锁至超时的问题，确保每帧请求必回 JSON；在 `py_worker.py`、`node_worker.mjs` 与 `StdioWorkerRunner` 三端对 `result`/`resultRepr` 施加 UTF-8 安全字节截断（含极小 `maxOutputBytes` 边界）；为 `child.stdin` 绑定跨平台断管监听（兼容 POSIX `EPIPE` 与 Windows `EOF`）；`DaemonPool` 改用 `process.execPath` 拉起 Node Worker，并对 `ctx.get('workingDirectory')` 增加容错保护。
+- **多会话隔离、策略与热重载加固**：将 `failureRecovery` 的在途候选 `candidates` 隔离至单会话状态，杜绝并发 `turn/end` 误清其他会话；修复 `runtimePolicy` 对 Windows UNC 相对路径的前导 `//` 损坏及 `edit_batch` 多路径逐项规范化；`fileMutationPolicy` 修复 `stat` 返回 `null` 误判、透传 `exec.toolSet` 并补齐 `edit_batch`/`find_and_read` 统计且不重复计数；`customPrompt` 升级为规范化键多订阅引用计数 Watcher，支持全局/工作区重合热重载与安全 LRU 淘汰；加固 `telemetry` 子服务查询、`contextCompaction` 异步后 `!disposed` 复查、`ast-outline.js` 环境变量清洗与 `index.d.ts` 的 `ContextCompactionStats` 根导出。
 
 ---
 

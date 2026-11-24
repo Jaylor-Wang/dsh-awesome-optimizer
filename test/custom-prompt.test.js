@@ -406,3 +406,49 @@ test('customPrompt honors DSH_HOME for default globalFile, watches all workspace
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('customPrompt shares watchers safely when workspace and global overlap and normalizes workspace cache keys', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-custom-shared-watcher-'));
+  const homeLikeDir = path.join(tempDir, 'home-ws');
+  const sharedDshDir = path.join(homeLikeDir, '.dsh');
+  const otherWsDir = path.join(tempDir, 'other-ws');
+  fs.mkdirSync(sharedDshDir, { recursive: true });
+  fs.mkdirSync(otherWsDir, { recursive: true });
+
+  const sharedFile = path.join(sharedDshDir, 'SYSTEM.md');
+  fs.writeFileSync(sharedFile, 'SHARED_V1', 'utf8');
+
+  const manager = new CustomPromptManager({
+    globalFile: sharedFile,
+    workspaceFile: '.dsh/SYSTEM.md',
+    hotReload: true,
+    maxWatchedWorkspaces: 1
+  });
+
+  try {
+    // Same path in different slash/casing forms must share one cache entry and watcher
+    assert.equal(manager.getGlobalPrompt(), 'SHARED_V1');
+    assert.equal(manager.getWorkspacePrompt(homeLikeDir), 'SHARED_V1');
+    const altForm = process.platform === 'win32'
+      ? `${homeLikeDir.toUpperCase().replace(/\\/g, '/')}/`
+      : `${homeLikeDir}/`;
+    assert.equal(manager.getWorkspacePrompt(altForm), 'SHARED_V1');
+    assert.equal(manager.cachedWorkspace.size, 1);
+
+    // Editing the shared file must refresh BOTH global and workspace caches
+    fs.writeFileSync(sharedFile, 'SHARED_V2', 'utf8');
+    await new Promise(r => setTimeout(r, 150));
+    assert.equal(manager.getGlobalPrompt(), 'SHARED_V2');
+    assert.equal(manager.getWorkspacePrompt(homeLikeDir), 'SHARED_V2');
+
+    // Evicting homeLikeDir via LRU must NOT close the shared global watcher
+    assert.equal(manager.getWorkspacePrompt(otherWsDir), '');
+    assert.equal(manager.cachedWorkspace.size, 1);
+    fs.writeFileSync(sharedFile, 'SHARED_V3', 'utf8');
+    await new Promise(r => setTimeout(r, 150));
+    assert.equal(manager.getGlobalPrompt(), 'SHARED_V3');
+  } finally {
+    manager.dispose();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});

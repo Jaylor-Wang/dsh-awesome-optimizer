@@ -5,18 +5,18 @@ English | [中文](README.zh.md)
 [![npm version](https://img.shields.io/npm/v/dsh-awesome-optimizer.svg?color=blue)](https://www.npmjs.com/package/dsh-awesome-optimizer)
 [![license](https://img.shields.io/github/license/Jaylor-Wang/dsh-awesome-optimizer.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Jaylor-Wang/dsh-awesome-optimizer.svg)](https://github.com/Jaylor-Wang/dsh-awesome-optimizer/releases)
-[![Tests](https://img.shields.io/badge/tests-207%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-216%20passed-brightgreen.svg)](test/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Types-blue.svg)](src/)
 
 High-performance runtime policy guards, persistent Python & Node evaluation daemons, PTC-backed composite batch tooling, standalone refined system prompt engine, and objective A/B turn telemetry plugin for the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`@deepseek-ai/dsh-agent-loop`).
 
 ---
 
-## Highlights in v4.3.0
+## Highlights in v4.4.0
 
-- **Signal-driven soft convergence (`convergence`)**: Upgraded default `convergence` behavior to `mode: "adaptive"` (preserving `periodic` opt-in). Triggers compact append-only notices only on efficiency degradation—consecutive single-tool serial reads (`serialReadThreshold: 4`) or long-tail exploration without edits/verification (`longTailStepThreshold: 12`, `stallStepsThreshold: 6`)—stays silent during active edits/verification, stretches thresholds and cooldowns 2× for healthy high-parallel batches, enforces `cooldownSteps: 6` to eliminate post-error bursts, isolates composite sub-call errors (`exec.parent`), completes cross-turn `snapshotEvents()` replay, and dynamically tailors `buildGuidance` to admitted tools.
-- **Composite tooling hardening & modularization (`find_and_read`, `edit_batch`)**: Fixed `find_and_read` `read` admission checks to honor step `exec.toolSet`, normalized Windows/POSIX paths when deduplicating `parseGrepOutput` metadata + text hits, expanded `find-read-ranking.js` exact-declaration preference to TypeScript classes/arrows, Python, Go, and Rust, and extracted `edit_batch` into `src/edit-batch.js` with cached `resolve` error handling, preserved denial messages, and non-atomic alias grouping.
-- **Unified bounded FS preflight & `readGuard` optimization**: Extracted shared `src/fs-preflight.js` across `readGuard`, `editRecovery`, and `edit_batch` with safe `workingDirectory`/`fs` lookups (also hardened in `runtimePolicy` and `fileMutationPolicy`), replaced `readGuard`'s upfront `maxInspectBytes + 1` local buffer allocation with chunked reads, hoisted hot-loop `RegExp` compilation in `code-outline.js`, skipped extensionless non-code files before I/O, invalidated outline caches on `retry_failed_write`, and called `.unref?.()` on `ast-outline.js` timers.
+- **Linear-time declaration ranking (`find_and_read`)**: Eliminated a catastrophic regex backtracking (ReDoS) hazard in `src/find-read-ranking.js` on multiline unclosed JS/TS arrow function headers by rewriting the parameter group to a strictly linear $O(n)$ pattern.
+- **Persistent eval worker & IPC hardening (`persistentEval`)**: Hardened `node_worker.mjs` against unprintable values and null-prototype throws (e.g. `throw Object.create(null)`) so every request guarantees a response frame without stalling until watchdog timeout; enforced UTF-8-safe `maxOutputBytes` truncation on evaluation `result`/`resultRepr` across `py_worker.py`, `node_worker.mjs`, and `StdioWorkerRunner`; attached `child.stdin` error listeners handling both POSIX `EPIPE` and Windows `EOF`; switched `DaemonPool` Node worker launches to `process.execPath`; and guarded `ctx.get('workingDirectory')` lookups.
+- **Multi-session, policy, watcher & contract hardening**: Isolated `failureRecovery` in-flight `write` candidates per session so concurrent `turn/end` events cannot clear sibling sessions; fixed `runtimePolicy` Windows UNC relative path normalization and per-item `edit_batch` target normalization; updated `fileMutationPolicy` to handle `null` `stat` results, respect step `exec.toolSet`, and record direct `edit_batch`/`find_and_read` calls without double-counting pipeline sub-calls; upgraded `customPrompt` watchers to normalized-key multi-subscriber reference counting so overlapping global/workspace prompts hot-reload cleanly across LRU evictions; guarded `telemetry` sub-service lookups; re-checked `!disposed` after async `contextCompaction` overflow retries; aligned `ast-outline.js` env sanitization (`PASSWD|CREDENTIAL|AUTH`); and exported `ContextCompactionStats` from `src/index.d.ts`.
 
 ---
 

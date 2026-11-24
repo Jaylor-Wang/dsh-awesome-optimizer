@@ -56,7 +56,7 @@ export function runAstOutline(content, filePath, {
     signal?.addEventListener('abort', abort, { once: true });
     try {
       const env = Object.fromEntries(Object.entries(process.env).filter(([name, value]) =>
-        value !== undefined && !/KEY|PASSWORD|SECRET|TOKEN/i.test(name) && !/^DSH_/i.test(name)
+        value !== undefined && !/(?:KEY|PASSWORD|PASSWD|SECRET|TOKEN|CREDENTIAL|AUTH)/i.test(name) && !/^DSH_/i.test(name)
       ));
       child = spawn(command, [
         'outline', '--stdin', '--lang', language, '--json=compact', '--view', 'expanded', '--items', 'structure',
