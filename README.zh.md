@@ -12,14 +12,6 @@
 
 ---
 
-## v4.4.0 更新亮点
-
-- **线性时间声明排序 (`find_and_read`)**：消除 `src/find-read-ranking.js` 在多行未闭合 JS/TS 箭头函数首行上的正则灾难性回溯（ReDoS），将参数组改写为严格线性时间匹配。
-- **持久化求值内核与 IPC 全面加固 (`persistentEval`)**：修复 `node_worker.mjs` 在抛出无原型对象（`throw Object.create(null)`）或不可序列化返回值时静默死锁至超时的问题，确保每帧请求必回 JSON；在 `py_worker.py`、`node_worker.mjs` 与 `StdioWorkerRunner` 三端对 `result`/`resultRepr` 施加 UTF-8 安全字节截断（含极小 `maxOutputBytes` 边界）；为 `child.stdin` 绑定跨平台断管监听（兼容 POSIX `EPIPE` 与 Windows `EOF`）；`DaemonPool` 改用 `process.execPath` 拉起 Node Worker，并对 `ctx.get('workingDirectory')` 增加容错保护。
-- **多会话隔离、策略与热重载加固**：将 `failureRecovery` 的在途候选 `candidates` 隔离至单会话状态，杜绝并发 `turn/end` 误清其他会话；修复 `runtimePolicy` 对 Windows UNC 相对路径的前导 `//` 损坏及 `edit_batch` 多路径逐项规范化；`fileMutationPolicy` 修复 `stat` 返回 `null` 误判、透传 `exec.toolSet` 并补齐 `edit_batch`/`find_and_read` 统计且不重复计数；`customPrompt` 升级为规范化键多订阅引用计数 Watcher，支持全局/工作区重合热重载与安全 LRU 淘汰；加固 `telemetry` 子服务查询、`contextCompaction` 异步后 `!disposed` 复查、`ast-outline.js` 环境变量清洗与 `index.d.ts` 的 `ContextCompactionStats` 根导出。
-
----
-
 ## 核心特性与架构设计
 
 ### 1. 系统提示词精简与文件驱动热重载 (`customPrompt`)

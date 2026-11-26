@@ -12,14 +12,6 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
 
 ---
 
-## Highlights in v4.4.0
-
-- **Linear-time declaration ranking (`find_and_read`)**: Eliminated a catastrophic regex backtracking (ReDoS) hazard in `src/find-read-ranking.js` on multiline unclosed JS/TS arrow function headers by rewriting the parameter group to a strictly linear $O(n)$ pattern.
-- **Persistent eval worker & IPC hardening (`persistentEval`)**: Hardened `node_worker.mjs` against unprintable values and null-prototype throws (e.g. `throw Object.create(null)`) so every request guarantees a response frame without stalling until watchdog timeout; enforced UTF-8-safe `maxOutputBytes` truncation on evaluation `result`/`resultRepr` across `py_worker.py`, `node_worker.mjs`, and `StdioWorkerRunner`; attached `child.stdin` error listeners handling both POSIX `EPIPE` and Windows `EOF`; switched `DaemonPool` Node worker launches to `process.execPath`; and guarded `ctx.get('workingDirectory')` lookups.
-- **Multi-session, policy, watcher & contract hardening**: Isolated `failureRecovery` in-flight `write` candidates per session so concurrent `turn/end` events cannot clear sibling sessions; fixed `runtimePolicy` Windows UNC relative path normalization and per-item `edit_batch` target normalization; updated `fileMutationPolicy` to handle `null` `stat` results, respect step `exec.toolSet`, and record direct `edit_batch`/`find_and_read` calls without double-counting pipeline sub-calls; upgraded `customPrompt` watchers to normalized-key multi-subscriber reference counting so overlapping global/workspace prompts hot-reload cleanly across LRU evictions; guarded `telemetry` sub-service lookups; re-checked `!disposed` after async `contextCompaction` overflow retries; aligned `ast-outline.js` env sanitization (`PASSWD|CREDENTIAL|AUTH`); and exported `ContextCompactionStats` from `src/index.d.ts`.
-
----
-
 ## Core Features & Architecture
 
 ### 1. Refined System Prompt & File-Driven Hot-Reload (`customPrompt`)
