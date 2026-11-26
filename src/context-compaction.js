@@ -21,6 +21,16 @@ function compactService(ctx) {
   }
 }
 
+function overflowLimit(compaction, agent) {
+  const config = compaction.config;
+  const route = agent.session?.requestHeader?.()?.config;
+  const override = route && Array.isArray(config?.modelPolicies)
+    ? config.modelPolicies.find(policy => policy.provider === route.provider && policy.model === route.model)
+    : undefined;
+  const limit = override?.maxOverflowRetries ?? config?.maxOverflowRetries ?? 1;
+  return Number.isSafeInteger(limit) && limit >= 0 ? limit : 1;
+}
+
 function log(ctx, level, message) {
   try { ctx.logger?.[level]?.(`[optimizer-context-compaction] ${message}`); } catch {}
 }
@@ -30,6 +40,7 @@ export function applyContextCompaction(ctx, rawConfig = {}) {
   if (!config.enabled) return null;
 
   let disposed = false;
+  const overflowByAgent = new WeakMap();
   let pressureAttempts = 0;
   let pressureCompactions = 0;
   let overflowAttempts = 0;
@@ -41,7 +52,8 @@ export function applyContextCompaction(ctx, rawConfig = {}) {
   ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
     if (!disposed && !signal?.aborted) {
       const compaction = compactService(ctx);
-      if (compaction) {
+      // Automatic backends already own this hook and the overflow budget.
+      if (compaction && compaction.config?.auto !== true) {
         pressureAttempts++;
         try {
           const result = await compaction.compactIfNeeded(agent, 'pressure', signal);
@@ -58,32 +70,34 @@ export function applyContextCompaction(ctx, rawConfig = {}) {
   });
 
   if (config.recoverOverflow) {
-    ctx.on('agent/request-error', async ({ agent, failure, signal }, next) => {
-      if (
-        disposed || signal?.aborted || failure?.code !== CONTEXT_WINDOW_EXCEEDED_CODE
-      ) return next();
+    ctx.on('agent/request-error', async ({ agent, turn, step, failure, signal }, next) => {
+      if (disposed || signal?.aborted || failure?.code !== CONTEXT_WINDOW_EXCEEDED_CODE) return next();
 
       const compaction = compactService(ctx);
-      if (!compaction) return next();
+      if (!compaction || compaction.config?.auto === true) return next();
+
+      let budget = overflowByAgent.get(agent);
+      if (!budget || budget.turn !== turn || budget.step !== step) {
+        budget = { turn, step, attempts: 0 };
+        overflowByAgent.set(agent, budget);
+      }
+      if (budget.attempts >= overflowLimit(compaction, agent)) return next();
 
       const generation = agent.session?.surface?.replaceGeneration;
+      budget.attempts++;
       overflowAttempts++;
+      let result;
       try {
-        const result = await compaction.compactIfNeeded(agent, 'context-overflow', signal);
-        const advanced = Number.isFinite(generation)
-          && agent.session?.surface?.replaceGeneration > generation;
-        if (result || advanced) overflowCompactions++;
-        if (!disposed && !signal?.aborted && advanced) return { kind: 'retry' };
+        result = await compaction.compactIfNeeded(agent, 'context-overflow', signal);
       } catch (error) {
         if (!signal?.aborted) {
           failures++;
           log(ctx, 'warn', `overflow recovery failed: ${error instanceof Error ? error.message : String(error)}`);
-          if (!disposed && Number.isFinite(generation) && agent.session?.surface?.replaceGeneration > generation) {
-            overflowCompactions++;
-            return { kind: 'retry' };
-          }
         }
       }
+      const advanced = Number.isFinite(generation) && agent.session?.surface?.replaceGeneration > generation;
+      if (result || advanced) overflowCompactions++;
+      if (!disposed && !signal?.aborted && advanced) return { kind: 'retry' };
       return next();
     });
   }
@@ -102,7 +116,7 @@ export function applyContextCompaction(ctx, rawConfig = {}) {
 }
 
 export const name = 'agent-optimizer-context-compaction';
-export const inject = ['agent'];
+export const inject = ['agents'];
 export const Config = ContextCompactionConfig;
 export function apply(ctx, config = {}) {
   const service = applyContextCompaction(ctx, config);

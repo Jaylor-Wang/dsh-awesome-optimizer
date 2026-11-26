@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseGrepOutput } from '../src/composite-tools.js';
 import { FindOutput, clipUtf8, finishFindOutput } from '../src/find-read-output.js';
-import { createTestRuntime, call } from './support/runtime.js';
+import { createTestRuntime, call, userMessage } from './support/runtime.js';
 
 const textOf = event => event.data.message.content.filter(block => block.type === 'text').map(block => block.text).join('\n');
 
@@ -146,6 +146,54 @@ test('find_and_read bounds dense chained windows, aggregate read lines, and conc
     assert.equal(stats.findLinesRequested, 75);
     assert.equal(stats.findReadBatches, 2);
     assert.match(output, /Additional matches/);
+  });
+});
+
+test('find_and_read uses host admission order, exclusive barriers and ordered result context', async () => {
+  const trace = [];
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const fastFinished = Promise.withResolvers();
+  await scenario({
+    configureTools(ctx) {
+      const grep = ctx.tools.get('grep');
+      grep.isConcurrencySafe = ({ pattern }) => pattern !== 'exclusive';
+      ctx.on('tools/pre-execute', async (exec, next) => {
+        if (exec.name !== 'grep') return next();
+        assert.ok(exec.parent);
+        assert.equal(exec.rootCallId, 'hardened-find');
+        const { pattern } = exec.arguments;
+        trace.push(`prepare:${pattern}`);
+        if (pattern === 'slow') await delay(15);
+        trace.push(`ready:${pattern}`);
+        return next();
+      });
+      ctx.on('tools/result', (exec, result) => {
+        if (exec.name === 'grep') trace.push(`result:${exec.arguments.pattern}:${result.isError}`);
+      });
+    },
+    async grepHandler({ pattern }, exec) {
+      trace.push(`start:${pattern}`);
+      if (pattern === 'slow') await fastFinished.promise;
+      exec.deferContext(userMessage(`context:${pattern}`));
+      trace.push(`finish:${pattern}`);
+      if (pattern === 'fast') fastFinished.resolve();
+      return 'No matches found';
+    }
+  }, { patterns: ['slow', 'fast', 'exclusive', 'tail'], contextLines: 0 }, ({ host, result }) => {
+    assert.equal(result.data.message.isError, false);
+    assert.deepEqual(trace.filter(stage => stage.startsWith('result:')), [
+      'result:slow:false', 'result:fast:false', 'result:exclusive:false', 'result:tail:false'
+    ]);
+    const before = (a, b) => assert.ok(trace.indexOf(a) >= 0 && trace.indexOf(a) < trace.indexOf(b), trace.join(', '));
+    before('ready:slow', 'prepare:fast');
+    before('finish:fast', 'finish:slow');
+    before('result:fast:false', 'prepare:exclusive');
+    before('result:exclusive:false', 'prepare:tail');
+    assert.deepEqual(host.events.filter(event => event.type === 'tool/ptc-dispatch')
+      .map(({ data }) => data.arguments.pattern), ['slow', 'fast', 'exclusive', 'tail']);
+    assert.deepEqual(host.requests[1].messages.flatMap(message => message.content ?? [])
+      .map(block => block.text).filter(text => text?.startsWith('context:')),
+    ['context:slow', 'context:fast', 'context:exclusive', 'context:tail']);
   });
 });
 

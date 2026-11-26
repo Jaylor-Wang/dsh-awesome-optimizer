@@ -1,6 +1,6 @@
 import z from '@deepseek-ai/schemastery';
 import { HarnessError } from '@deepseek-ai/dsh-llm';
-import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline';
+import { executeToolBatch, ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline';
 import { normalizePath } from './runtime-policy.js';
 import { truncateLongLines } from './read-guard.js';
 import { getWorkingDirectory } from './fs-preflight.js';
@@ -177,54 +177,62 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
     }
   });
 
-  async function dispatchSubCall(exec, toolName, subArgs, subCallId) {
+  async function dispatchSubBatch(exec, calls, maxParallel) {
     const session = exec.agent?.session;
-    const log = {
-      rootCallId: exec.rootCallId,
-      parentCallId: exec.callId,
-      subCallId,
-      name: toolName,
-      arguments: subArgs
-    };
-    if (session?.append) {
-      session.append('tool/ptc-dispatch-start', log);
-    }
-    const prepared = await pipeline.prepare({
-      callId: subCallId,
-      rootCallId: exec.rootCallId,
-      parent: exec.token,
-      name: toolName,
-      arguments: subArgs,
-      agent: exec.agent,
-      toolSet: exec.toolSet,
-      signal: exec.signal
+    const rootCallId = exec.rootCallId ?? exec.callId;
+    const nested = input => ({ ...input, rootCallId, parent: exec.token });
+    const audit = input => ({
+      rootCallId, parentCallId: exec.callId, subCallId: input.callId,
+      name: input.name, arguments: input.arguments
     });
-    const outcome = prepared.kind === 'dispatch' ? await pipeline.dispatch(prepared.exec) : prepared;
-    const result = await pipeline.complete(prepared.exec, outcome);
-    if (session?.append) {
-      session.append('tool/ptc-dispatch', {
-        ...log,
-        isError: result.isError,
-        content: result.content,
-        ...(result.error?.info ? { error: result.error.info } : {}),
-        ...(result.meta === undefined ? {} : { meta: result.meta })
-      });
-    }
-    for (const context of result.additionalContexts ?? []) {
-      exec.deferContext(context);
-    }
+
+    // The host scheduler owns admission order, exclusive barriers, cancellation and completion.
+    // Adapt only the nested identity and event format (root step logging stays disabled).
+    const stages = {
+      executionMode: input => pipeline.executionMode(nested(input)),
+      prepare(input) {
+        session?.append?.('tool/ptc-dispatch-start', audit(input));
+        return pipeline.prepare(nested(input));
+      },
+      dispatch: input => pipeline.dispatch(input),
+      async complete(input, outcome) {
+        const result = await pipeline.complete(input, outcome);
+        session?.append?.('tool/ptc-dispatch', {
+          ...audit(input),
+          isError: result.isError,
+          content: result.content,
+          ...(result.error?.info ? { error: result.error.info } : {}),
+          ...(result.meta === undefined ? {} : { meta: result.meta })
+        });
+        for (const context of result.additionalContexts ?? []) exec.deferContext(context);
+        return result;
+      }
+    };
+    const batch = await executeToolBatch({
+      calls, agent: exec.agent, toolSet: exec.toolSet, signal: exec.signal,
+      maxParallelToolCalls: maxParallel
+    }, stages, () => maxParallel);
+    return batch.results.map(entry => entry.result);
+  }
+
+  function subCall(id, name, args) {
+    return { type: 'tool-call', id, name, arguments: JSON.stringify(args) };
+  }
+
+  async function dispatchSubCall(exec, toolName, subArgs, subCallId) {
+    const [result] = await dispatchSubBatch(exec, [subCall(subCallId, toolName, subArgs)], 1);
     return result;
   }
 
   async function readBatch(exec, batch) {
-    return Promise.all(batch.map(async task => {
-      exec.signal.throwIfAborted();
-      const result = await dispatchSubCall(exec, 'read', {
-        file_path: task.file.displayPath, offset: task.win.start, limit: task.win.end - task.win.start + 1
-      }, `${exec.callId}:find-read-${task.index}`);
+    const calls = batch.map(task => subCall(`${exec.callId}:find-read-${task.index}`, 'read', {
+      file_path: task.file.displayPath, offset: task.win.start, limit: task.win.end - task.win.start + 1
+    }));
+    const results = await dispatchSubBatch(exec, calls, config.readConcurrency);
+    return results.map(result => {
       const text = (result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
       return result.isError ? { error: result.error?.message ?? text } : { text: stripReadEnvelope(text) };
-    }));
+    });
   }
 
   if (config.findAndRead) {
@@ -248,7 +256,7 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
             minItems: 1,
             maxItems: config.maxPatterns,
             items: { type: 'string' },
-            description: `1 to ${config.maxPatterns} ripgrep regex patterns searched in parallel and aggregated.`
+            description: `1 to ${config.maxPatterns} ripgrep regex patterns, searched concurrently when the registered grep tool allows it.`
           },
           path: {
             type: 'string',
@@ -276,7 +284,8 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
         schema: { type: 'string' },
         render: (_args, value) => [{ type: 'text', text: value }]
       },
-      isConcurrencySafe: () => true,
+      // Scoped replacements may be exclusive. The root classifier has no agent or tool set.
+      isConcurrencySafe: () => false,
       async execute(args, exec) {
         exec.signal.throwIfAborted();
         const rawPatterns = [
@@ -314,18 +323,16 @@ export function applyCompositeTools(ctx, rawConfig = {}) {
           state.findPatternsSearched += uniquePatterns.length;
         }
 
-        const grepRuns = await Promise.all(uniquePatterns.map(async (pattern, idx) => {
-          exec.signal.throwIfAborted();
-          const grepArgs = {
-            pattern,
-            ...(typeof args?.path === 'string' && args.path.trim() ? { path: args.path } : {}),
-            ...(typeof args?.include === 'string' && args.include.trim() ? { include: args.include } : {})
-          };
-          const result = await dispatchSubCall(exec, 'grep', grepArgs, `${exec.callId}:find-grep-${idx}`);
-          return { pattern, result };
+        const grepCalls = uniquePatterns.map((pattern, index) => subCall(`${exec.callId}:find-grep-${index}`, 'grep', {
+          pattern,
+          ...(typeof args?.path === 'string' && args.path.trim() ? { path: args.path } : {}),
+          ...(typeof args?.include === 'string' && args.include.trim() ? { include: args.include } : {})
         }));
+        const grepResults = await dispatchSubBatch(exec, grepCalls, config.maxPatterns);
+        exec.signal.throwIfAborted();
 
-        const runs = grepRuns.map(({ pattern, result }, index) => {
+        const runs = grepResults.map((result, index) => {
+          const pattern = uniquePatterns[index];
           const text = (result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
           const parsed = result.isError ? [] : parseGrepOutput(text, result.meta);
           return { pattern, result, index, text, parsed, status: searchStatus(text, result.meta, parsed.length) };

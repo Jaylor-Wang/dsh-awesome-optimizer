@@ -5,7 +5,6 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const require = createRequire(import.meta.url);
 
 function findTsc() {
   const searchBases = [root];
@@ -55,22 +54,8 @@ if (tscBin) {
     windowsHide: true,
     shell: true
   });
-  if (!pathTsc.error && pathTsc.status !== null) {
-    process.exitCode = pathTsc.status;
-  } else {
-    // Verify all declared .d.ts files exist and match package.json exports
-    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-    for (const [subpath, entry] of Object.entries(pkg.exports)) {
-      if (typeof entry === 'object' && entry !== null && entry.types) {
-        const resolved = path.resolve(root, entry.types);
-        if (!fs.existsSync(resolved)) {
-          console.error(`Missing declaration file for export "${subpath}": ${entry.types}`);
-          process.exitCode = 1;
-        }
-      }
-    }
-    if (!process.exitCode) {
-      console.log('Verified all package.json TypeScript declaration entrypoints exist.');
-    }
+  if (pathTsc.error || pathTsc.status === null) {
+    console.error('TypeScript compiler unavailable. Install the development dependencies or provide tsc on PATH.');
   }
+  process.exitCode = pathTsc.status ?? 1;
 }

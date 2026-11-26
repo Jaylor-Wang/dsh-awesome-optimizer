@@ -1,3 +1,4 @@
+import { HarnessError } from '@deepseek-ai/dsh-llm';
 import z from '@deepseek-ai/schemastery';
 import { DaemonPool } from './daemon-pool.js';
 
@@ -65,6 +66,12 @@ export function formatEvalOutput(resp) {
   }
 
   return parts.join('\n');
+}
+
+function evalToolResult(response) {
+  const text = formatEvalOutput(response);
+  if (!response?.success) throw new HarnessError(text, 'PERSISTENT_EVAL_FAILED');
+  return text;
 }
 
 /**
@@ -201,7 +208,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
           timeoutMs: config.timeoutMs,
           signal: exec?.signal
         });
-        return formatEvalOutput(response);
+        return evalToolResult(response);
       }
     }, registrationOptions);
   }
@@ -250,7 +257,7 @@ export function applyPersistentEval(ctx, rawConfig = {}) {
           timeoutMs: config.timeoutMs,
           signal: exec?.signal
         });
-        return formatEvalOutput(response);
+        return evalToolResult(response);
       }
     }, registrationOptions);
   }

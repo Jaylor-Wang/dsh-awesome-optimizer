@@ -123,8 +123,9 @@ for (const kernel of kernels) {
     await evaluate(a, { code: kernel.mark });
 
     ctx.emit('session/event', a, { type: 'working-directory/change', data: { cwd: dirs.missing } });
-    const failed = await evaluate(a, { code: kernel.mark.replace('73', '999'), reset: true });
-    assert.match(failed, /\[Error:/);
+    await assert.rejects(evaluate(a, { code: kernel.mark.replace('73', '999'), reset: true }), {
+      code: 'PERSISTENT_EVAL_FAILED', message: /\[Error:/
+    });
     ctx.emit('session/event', a, { type: 'working-directory/change', data: { cwd: dirs.b } });
     assert.equal(await evaluate(a, { code: kernel.read }), '=> 73');
 

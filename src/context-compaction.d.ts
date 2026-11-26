@@ -2,9 +2,9 @@ import type { Context } from '@deepseek-ai/cordis';
 import type z from '@deepseek-ai/schemastery';
 
 export interface ContextCompactionOptions {
-  /** Enable the optimizer-owned bridge to the host compaction service. Default: true. */
+  /** Bridge to a host backend without automatic compaction. Default: true. */
   enabled?: boolean;
-  /** Compact and retry provider-confirmed context-window overflows. Default: true. */
+  /** Recover confirmed context-window overflows within the backend's per-request retry budget. Default: true. */
   recoverOverflow?: boolean;
 }
 

@@ -42,7 +42,7 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
 ### 2. PTC Native Composite Batch Tooling (`compositeTools`)
 
 - **`find_and_read`**:
-  Searches 1–5 regex patterns in parallel without changing regex whitespace, merges and splits adjacent matches, and dispatches budget-aware batches of native `read` calls in one round-trip. The complete returned text, including headers, errors, indexes, and omission notices, fits `maxTotalBytes` (24KB by default). Matched rows take priority; undisplayed locations become bounded indexes with explicit omission counts. Upstream truncation, failed patterns, totals, and recovery locators that fit are reported.
+  Searches 1–5 regex patterns without changing regex whitespace, merges and splits adjacent matches, and dispatches budget-aware batches of native `read` calls in one round-trip. The host scheduler runs concurrency-safe subcalls in parallel, isolates exclusive tools, and commits results in input order. The complete returned text, including headers, errors, indexes, and omission notices, fits `maxTotalBytes` (24KB by default). Matched rows take priority; undisplayed locations become bounded indexes with explicit omission counts. Upstream truncation, failed patterns, totals, and recovery locators that fit are reported.
   - `maxWindowLines: 120`: maximum requested lines per slice, preventing dense chained matches from becoming whole-file reads.
   - `maxReadLines: 600`: maximum total requested lines across all files and windows in one call.
   - `readConcurrency: 3`: maximum simultaneous reads per batch; remaining output space is checked before the next batch. Matches hidden by native read truncation remain in the recovery index.
@@ -85,6 +85,8 @@ High-performance runtime policy guards, persistent Python & Node evaluation daem
 ---
 
 ## Installation & Quickstart
+
+The runtime peer dependencies target DSH `0.2.2-rc.3`. Use the host's compatible Cordis, Schemastery, LLM, and tool pipeline packages.
 
 ### 1. Via DSH Plugin Command (Recommended)
 
@@ -194,6 +196,8 @@ Applies ONLY to review / diagnose / change / fix / build.
 ---
 
 ## Verification & Benchmarking
+
+Run these commands from the checkout or the extracted npm archive. Use the compatible DSH host, TypeScript (`tsc`), Python, and `ast-grep`.
 
 ```bash
 # Link local peer dependencies from installed DSH host (zero network requests)

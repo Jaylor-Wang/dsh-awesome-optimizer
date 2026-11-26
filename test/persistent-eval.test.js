@@ -153,15 +153,47 @@ fetched + globalThis.offset;
     assert.equal(runner.launchCount, 0);
 
     // Submit both tasks before the watchdog terminates the first worker.
-    const p1 = pyTool.execute({ code: 'while True: pass' }, execContext);
+    const timeout = assert.rejects(pyTool.execute({ code: 'while True: pass' }, execContext), {
+      code: 'PERSISTENT_EVAL_FAILED',
+      message: /Execution timed out after 250ms.*terminated and will be restarted cleanly/
+    });
     const p2 = pyTool.execute({ code: '"recovered second task"' }, execContext);
 
-    const [out1, out2] = await Promise.all([p1, p2]);
-
-    assert.match(out1, /Execution timed out after 250ms/);
-    assert.match(out1, /terminated and will be restarted cleanly/);
+    const [, out2] = await Promise.all([timeout, p2]);
     assert.equal(out2.trim(), '=> \'recovered second task\'');
     assert.equal(runner.launchCount, 2);
+  });
+
+  test('worker failures enter the official error channel and repeated failures trip the circuit breaker', async () => {
+    const host = await createTestRuntime({
+      script: [
+        [call('py-error', EVAL_PYTHON_TOOL, { code: 'raise ValueError("python failure")' })],
+        ...['node-first', 'node-second', 'node-blocked'].map(id => [
+          call(id, EVAL_NODE_TOOL, { code: 'throw new Error("node failure")' })
+        ]),
+        [call('node-ok', EVAL_NODE_TOOL, { code: '6 * 7' })],
+        [{ type: 'text', text: 'Done.' }]
+      ]
+    });
+    try {
+      await host.run();
+      assert.deepEqual(host.errors, []);
+      const results = host.events.filter(event => event.type === 'tool/result').map(event => event.data);
+      assert.equal(results.length, 5);
+      for (const [index, message] of [/python failure/, /node failure/, /node failure/].entries()) {
+        const result = results[index];
+        assert.equal(result.message.isError, true);
+        assert.equal(result.error.code, 'PERSISTENT_EVAL_FAILED');
+        assert.match(result.message.content[0].text, message);
+      }
+      assert.equal(results[3].message.isError, true);
+      assert.match(results[3].message.content[0].text, /NO_PROGRESS/);
+      assert.equal(results[4].message.isError, false);
+      assert.equal(results[4].message.content[0].text, '=> 42');
+      assert.equal(host.telemetry.getSummary(host.agent.session).failedToolCalls, 4);
+    } finally {
+      await host.dispose();
+    }
   });
 
   test('anti-dumping guard truncates oversized output payloads', async () => {
